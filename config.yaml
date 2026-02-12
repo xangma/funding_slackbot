@@ -1,0 +1,92 @@
+sources:
+  - id: ukri_rss
+    type: rss
+    url: https://www.ukri.org/opportunity/feed/
+
+filters:
+  include_keywords:
+    # Core AI/ML + research software
+    - AI
+    - artificial intelligence
+    - machine learning
+    - deep learning
+    - data science
+    - research software
+    - scientific software
+    - software engineering
+    - scientific computing
+    - analytics
+
+    # Compute infrastructure
+    - HPC
+    - high performance computing
+    - GPU
+    - distributed computing
+    - kubernetes
+    - container
+    - MLOps
+
+    # Methods
+    - computer vision
+    - image analysis
+    - signal processing
+    - simulation
+    - surrogate model
+    - emulator
+
+    # Team domain context
+    - astrophysics
+    - cosmology
+    - gravitational wave
+    - LIGO
+    - Virgo
+    - KAGRA
+    - Euclid
+    - LSST
+    - radio astronomy
+    - fast radio burst
+    - FRB
+    - dark energy
+    - modified gravity
+    - galaxy survey
+    - 21cm
+    - satellite
+    - remote sensing
+    - geospatial
+    - citizen science
+    - disaster relief
+    - road detection
+
+    # Others
+    - health
+    - NHS
+  exclude_keywords:
+    - studentship
+    - PhD
+    - doctoral
+    - doctoral training
+    - internship
+    - traineeship
+    - placement
+    - undergraduate
+    - masters
+    - MSc
+    - summer school
+    - bursary
+  include_councils: []
+  include_funding_types: []
+  min_days_until_deadline: 
+
+slack:
+  webhook_env_var: SLACK_WEBHOOK_URL
+
+posting:
+  max_posts_per_run: 10
+  dry_run: false
+  record_non_matches_as_seen: true
+
+storage:
+  type: sqlite
+  path: data/state.sqlite
+
+log_level: INFO

@@ -1,0 +1,49 @@
+name: Funding Bot Schedule
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore state cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/state.sqlite
+          key: funding-bot-state-${{ github.run_id }}
+          restore-keys: |
+            funding-bot-state-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Ensure state path exists
+        run: mkdir -p data
+
+      - name: Run funding bot
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          funding-bot --config config.yaml run
+
+      - name: Save state cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/state.sqlite
+          key: funding-bot-state-${{ github.run_id }}

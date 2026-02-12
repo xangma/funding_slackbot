@@ -1,0 +1,33 @@
+sources:
+  - id: ukri_rss
+    type: rss
+    url: https://www.ukri.org/opportunity/feed/
+
+filters:
+  include_keywords:
+    - AI
+    - machine learning
+    - health
+    - NHS
+    - digital twin
+  exclude_keywords:
+    - studentship
+    - PhD
+    - doctoral training
+  include_councils: []
+  include_funding_types: []
+  min_days_until_deadline:
+
+slack:
+  webhook_env_var: SLACK_WEBHOOK_URL
+
+posting:
+  max_posts_per_run: 10
+  dry_run: false
+  record_non_matches_as_seen: true
+
+storage:
+  type: sqlite
+  path: data/state.sqlite
+
+log_level: INFO

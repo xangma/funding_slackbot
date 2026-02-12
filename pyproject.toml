@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "funding-slackbot"
+version = "0.1.0"
+description = "Modular UKRI funding opportunity Slack notifier"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "feedparser>=6.0.11,<7",
+  "python-dateutil>=2.9.0,<3",
+  "PyYAML>=6.0,<7",
+  "requests>=2.32.0,<3"
+]
+
+[project.scripts]
+funding-bot = "funding_slackbot.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+addopts = "-q"
