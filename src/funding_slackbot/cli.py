@@ -8,7 +8,8 @@ import sys
 from funding_slackbot.config import AppConfig, ConfigError, load_config
 from funding_slackbot.filters import RuleBasedFilter
 from funding_slackbot.logging_config import setup_logging
-from funding_slackbot.notifiers import SlackWebhookNotifier
+from funding_slackbot.models import Opportunity
+from funding_slackbot.notifiers import SlackWebhookNotifier, render_slack_message_text
 from funding_slackbot.service import FundingOpportunityService
 from funding_slackbot.sources import Source, create_source
 from funding_slackbot.store import SQLiteStore
@@ -100,6 +101,7 @@ def main(argv: list[str] | None = None) -> int:
         max_posts_per_run=app_config.posting.max_posts_per_run,
         record_non_matches_as_seen=app_config.posting.record_non_matches_as_seen,
         dry_run=dry_run,
+        preview_callback=_slack_dry_run_preview if dry_run else None,
     )
 
     stats = service.run_once()
@@ -167,6 +169,12 @@ def _run_backfill(*, store: SQLiteStore, sources: list[Source]) -> int:
 
     logger.info("Backfill complete | marked_seen=%d errors=%d", marked, errors)
     return 0 if errors == 0 else 1
+
+
+def _slack_dry_run_preview(opportunity: Opportunity, reason: str) -> None:
+    print("[DRY RUN] WOULD POST TEXT:")
+    print(render_slack_message_text(opportunity, reason))
+    print("")
 
 
 if __name__ == "__main__":

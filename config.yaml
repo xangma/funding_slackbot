@@ -2,6 +2,9 @@ sources:
   - id: ukri_rss
     type: rss
     url: https://www.ukri.org/opportunity/feed/
+  - id: wellcome_schemes
+    type: wellcome_schemes
+    url: https://wellcome.org/research-funding/schemes
 
 filters:
   include_keywords:
@@ -89,4 +92,4 @@ storage:
   type: sqlite
   path: data/state.sqlite
 
-log_level: INFO
+log_level: DEBUG
