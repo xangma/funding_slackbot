@@ -47,3 +47,12 @@ jobs:
         with:
           path: data/state.sqlite
           key: funding-bot-state-${{ github.run_id }}
+
+      - name: Upload state artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: funding-bot-state-sqlite
+          path: data/state.sqlite
+          if-no-files-found: ignore
+          retention-days: 14
