@@ -12,6 +12,8 @@ from funding_slackbot.sources import Source
 from funding_slackbot.store import Store
 
 logger = logging.getLogger(__name__)
+_PENDING_POST_MARKER = "__pending_post__"
+_POST_FAILED_MARKER = "__post_failed__"
 
 
 @dataclass(slots=True)
@@ -21,6 +23,7 @@ class RunStats:
     filtered_out: int = 0
     posted: int = 0
     skipped_already_posted: int = 0
+    skipped_pending_confirmation: int = 0
     errors: list[str] = field(default_factory=list)
 
     @property
@@ -84,6 +87,9 @@ class FundingOpportunityService:
                 if seen and seen.posted_at:
                     stats.skipped_already_posted += 1
                     continue
+                if seen and _is_pending_post_reason(seen.match_reason):
+                    stats.skipped_pending_confirmation += 1
+                    continue
 
                 filter_result = self.filter_engine.evaluate(opportunity)
                 if not filter_result.matched:
@@ -121,11 +127,42 @@ class FundingOpportunityService:
                     return stats
 
                 try:
+                    self.store.mark_seen(
+                        external_id=opportunity.external_id,
+                        source_id=opportunity.source_id,
+                        title=opportunity.title,
+                        url=opportunity.url,
+                        match_reason=_PENDING_POST_MARKER,
+                        posted_at=None,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    message = f"failed to record pending post {opportunity.external_id}: {exc}"
+                    logger.exception(message)
+                    stats.errors.append(message)
+                    continue
+
+                try:
                     self.notifier.post(opportunity, reason_text)
                 except Exception as exc:  # noqa: BLE001
                     message = f"failed to post {opportunity.external_id}: {exc}"
                     logger.exception(message)
                     stats.errors.append(message)
+                    try:
+                        self.store.mark_seen(
+                            external_id=opportunity.external_id,
+                            source_id=opportunity.source_id,
+                            title=opportunity.title,
+                            url=opportunity.url,
+                            match_reason=f"{_POST_FAILED_MARKER}: {reason_text}",
+                            posted_at=None,
+                        )
+                    except Exception as mark_exc:  # noqa: BLE001
+                        mark_message = (
+                            f"failed to clear pending post state "
+                            f"{opportunity.external_id}: {mark_exc}"
+                        )
+                        logger.exception(mark_message)
+                        stats.errors.append(mark_message)
                     continue
 
                 try:
@@ -158,3 +195,7 @@ def _default_preview(opportunity: Opportunity, reason: str) -> None:
     print(f"  Why it matched: {reason}")
     print(f"  Source: {opportunity.source_id}")
     print("")
+
+
+def _is_pending_post_reason(reason: str | None) -> bool:
+    return reason == _PENDING_POST_MARKER

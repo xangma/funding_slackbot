@@ -32,6 +32,29 @@ class RecordingNotifier(Notifier):
         self.calls.append(opportunity.external_id)
 
 
+class FailPostedSQLiteStore(SQLiteStore):
+    def mark_seen(
+        self,
+        *,
+        external_id: str,
+        source_id: str,
+        title: str,
+        url: str,
+        match_reason: str | None,
+        posted_at: datetime | None,
+    ) -> None:
+        if posted_at is not None:
+            raise RuntimeError("simulated failure confirming posted_at")
+        super().mark_seen(
+            external_id=external_id,
+            source_id=source_id,
+            title=title,
+            url=url,
+            match_reason=match_reason,
+            posted_at=posted_at,
+        )
+
+
 def test_dedupe_prevents_double_posting(tmp_path) -> None:
     db_path = tmp_path / "state.sqlite"
     store = SQLiteStore(str(db_path))
@@ -80,3 +103,40 @@ def test_dedupe_prevents_double_posting(tmp_path) -> None:
     seen = store.has_seen("stable-id-123")
     assert seen is not None
     assert seen.posted_at is not None
+
+
+def test_pending_post_marker_prevents_reposting_on_confirmation_failure(tmp_path) -> None:
+    store = FailPostedSQLiteStore(str(tmp_path / "state.sqlite"))
+    store.init_db()
+    opportunity = Opportunity(
+        source_id="ukri_rss",
+        external_id="stable-id-123",
+        title="AI programme",
+        url="https://www.ukri.org/opportunity/test-ai",
+        published_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        summary="A matching item",
+        raw={},
+    )
+    source = StaticSource([opportunity])
+    notifier = RecordingNotifier()
+    service = FundingOpportunityService(
+        sources=[source],
+        filter_engine=AlwaysMatchFilter(),
+        store=store,
+        notifier=notifier,
+        max_posts_per_run=10,
+        record_non_matches_as_seen=True,
+        dry_run=False,
+    )
+
+    first_stats = service.run_once()
+    second_stats = service.run_once()
+
+    seen = store.has_seen("stable-id-123")
+    assert seen is not None
+    assert seen.posted_at is None
+    assert seen.match_reason == "__pending_post__"
+    assert notifier.calls == ["stable-id-123"]
+    assert first_stats.posted == 0
+    assert second_stats.posted == 0
+    assert second_stats.skipped_pending_confirmation == 1

@@ -27,11 +27,11 @@ _BREAK_TAGS = re.compile(r"</?(?:br|p|li|div|tr|h\d|ul|ol|table)[^>]*>", re.IGNO
 _HTML_TAGS = re.compile(r"<[^>]+>")
 _MULTISPACE = re.compile(r"\s+")
 _NEXT_DATA_SCRIPT = re.compile(
-    r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>',
+    r'<script[^>]+id=["\']__NEXT_DATA__["\'][^>]*>(.*?)</script>',
     re.IGNORECASE | re.DOTALL,
 )
 _COMPETITION_CARD = re.compile(
-    r"<li>\s*<h2[^>]*>.*?<a[^>]+href=\"(?P<href>/competition/[^\"]+)\"[^>]*>"
+    r"<li>\s*<h2[^>]*>.*?<a[^>]+href=[\"'](?P<href>/competition/[^\"']+)[\"'][^>]*>"
     r"(?P<title>.*?)</a>.*?<div class=\"wysiwyg-styles[^>]*>(?P<summary>.*?)</div>"
     r".*?<dl class=\"date-definition-list[^>]*>(?P<dates>.*?)</dl>",
     re.IGNORECASE | re.DOTALL,
@@ -51,7 +51,7 @@ _PORTSMOUTH_SESSION = re.compile(
     re.IGNORECASE,
 )
 _LEVERHULME_ROW = re.compile(
-    r"<tr>\s*<td>\s*<a[^>]+href=\"(?P<href>[^\"]+)\"[^>]*>(?P<title>.*?)</a>\s*</td>\s*"
+    r"<tr>\s*<td>\s*<a[^>]+href=[\"'](?P<href>[^\"']+)[\"'][^>]*>(?P<title>.*?)</a>\s*</td>\s*"
     r"<td>(?P<closing>.*?)</td>\s*</tr>",
     re.IGNORECASE | re.DOTALL,
 )

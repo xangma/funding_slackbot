@@ -64,6 +64,37 @@ def _as_string_list(value: Any) -> list[str]:
     return [str(item).strip() for item in value if str(item).strip()]
 
 
+def _as_bool(value: Any, *, field_name: str) -> bool:
+    if isinstance(value, bool):
+        return value
+
+    if isinstance(value, int) and value in {0, 1}:
+        return bool(value)
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+
+    raise ConfigError(f"{field_name} must be a boolean")
+
+
+def _as_int(value: Any, *, field_name: str, minimum: int | None = None) -> int:
+    if isinstance(value, bool):
+        raise ConfigError(f"{field_name} must be an integer")
+
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{field_name} must be an integer") from exc
+
+    if minimum is not None and parsed < minimum:
+        raise ConfigError(f"{field_name} must be >= {minimum}")
+    return parsed
+
+
 def _resolve_relative_path(config_path: Path, raw_path: str) -> str:
     candidate = Path(raw_path).expanduser()
     if candidate.is_absolute():
@@ -116,12 +147,16 @@ def load_config(path: str | Path) -> AppConfig:
     if not isinstance(raw_filters, dict):
         raise ConfigError("filters must be a mapping")
 
-    min_days = raw_filters.get("min_days_until_deadline")
-    if min_days is not None:
-        try:
-            min_days = int(min_days)
-        except (TypeError, ValueError) as exc:
-            raise ConfigError("filters.min_days_until_deadline must be an integer") from exc
+    min_days_raw = raw_filters.get("min_days_until_deadline")
+    min_days = (
+        _as_int(
+            min_days_raw,
+            field_name="filters.min_days_until_deadline",
+            minimum=0,
+        )
+        if min_days_raw is not None
+        else None
+    )
 
     filter_settings = FilterSettings(
         include_keywords=_as_string_list(raw_filters.get("include_keywords")),
@@ -145,10 +180,18 @@ def load_config(path: str | Path) -> AppConfig:
         raise ConfigError("posting must be a mapping")
 
     posting_settings = PostingSettings(
-        max_posts_per_run=int(raw_posting.get("max_posts_per_run", 10)),
-        dry_run=bool(raw_posting.get("dry_run", False)),
-        record_non_matches_as_seen=bool(
-            raw_posting.get("record_non_matches_as_seen", True)
+        max_posts_per_run=_as_int(
+            raw_posting.get("max_posts_per_run", 10),
+            field_name="posting.max_posts_per_run",
+            minimum=1,
+        ),
+        dry_run=_as_bool(
+            raw_posting.get("dry_run", False),
+            field_name="posting.dry_run",
+        ),
+        record_non_matches_as_seen=_as_bool(
+            raw_posting.get("record_non_matches_as_seen", True),
+            field_name="posting.record_non_matches_as_seen",
         ),
     )
 

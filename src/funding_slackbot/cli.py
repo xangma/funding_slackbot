@@ -12,6 +12,7 @@ from funding_slackbot.models import Opportunity
 from funding_slackbot.notifiers import SlackWebhookNotifier, render_slack_message_text
 from funding_slackbot.service import FundingOpportunityService
 from funding_slackbot.sources import Source, create_source
+from funding_slackbot.sources.registry import SourceRegistrationError
 from funding_slackbot.store import SQLiteStore
 
 logger = logging.getLogger(__name__)
@@ -64,7 +65,11 @@ def main(argv: list[str] | None = None) -> int:
     log_level = args.log_level or app_config.log_level
     setup_logging(log_level)
 
-    store = _build_store(app_config)
+    try:
+        store = _build_store(app_config)
+    except ConfigError as exc:
+        print(f"Config error: {exc}", file=sys.stderr)
+        return 2
 
     if args.command == "init-db":
         store.init_db()
@@ -72,7 +77,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     store.init_db()
-    sources = _build_sources(app_config)
+    try:
+        sources = _build_sources(app_config)
+    except ConfigError as exc:
+        print(f"Config error: {exc}", file=sys.stderr)
+        return 2
 
     if args.command == "backfill":
         if not args.mark_seen:
@@ -106,12 +115,13 @@ def main(argv: list[str] | None = None) -> int:
 
     stats = service.run_once()
     logger.info(
-        "Run complete | processed=%d matched=%d posted=%d filtered_out=%d skipped_already_posted=%d errors=%d",
+        "Run complete | processed=%d matched=%d posted=%d filtered_out=%d skipped_already_posted=%d skipped_pending_confirmation=%d errors=%d",
         stats.processed,
         stats.matched,
         stats.posted,
         stats.filtered_out,
         stats.skipped_already_posted,
+        stats.skipped_pending_confirmation,
         len(stats.errors),
     )
 
@@ -127,7 +137,10 @@ def _build_store(app_config: AppConfig) -> SQLiteStore:
 def _build_sources(app_config: AppConfig) -> list[Source]:
     sources: list[Source] = []
     for source_config in app_config.sources:
-        source = create_source(source_config)
+        try:
+            source = create_source(source_config)
+        except SourceRegistrationError as exc:
+            raise ConfigError(str(exc)) from exc
         sources.append(source)
     return sources
 

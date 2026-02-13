@@ -226,7 +226,7 @@ def test_innovation_source_dedupes_against_ukri_titles(monkeypatch: pytest.Monke
 
 
 def test_parser_smoke_prints_one_parsed_grant_per_source(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ukri_xml = b"""<?xml version="1.0" encoding="UTF-8"?>
     <rss version="2.0">
@@ -319,22 +319,13 @@ def test_parser_smoke_prints_one_parsed_grant_per_source(
     wellcome = wellcome_source.fetch()[0]
     innovation = innovation_source.fetch()[0]
 
-    # Kept explicit for developers running pytest to verify parser outputs quickly.
-    with capsys.disabled():
-        print(f"[parsed] ukri_rss: {ukri.title} | {ukri.url}")
-        print(f"[parsed] wellcome_schemes: {wellcome.title} | {wellcome.url}")
-        print(
-            "[parsed] innovation_funding_search: "
-            f"{innovation.title} | {innovation.url}"
-        )
-
     assert ukri.title == "AI for health systems"
     assert wellcome.title == "Wellcome Career Development Awards"
     assert innovation.title == "Unique Innovation Competition"
 
 
 def test_portsmouth_jobs_source_filters_related_roles(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     html = b'<input name="WVID.STD_HID_FLDS.ET_BASE.1-1" value="217310N6lo"><input name="SESSION.STD_HID_FLDS.ET_BASE.1-1" value="SESSION123">'
     payload = {"results": [{"vacancy_id": "1", "job_title": "Research Software Engineer", "job_description": "Physics and computing support", "app_close_d": "20260220", "salary": "50000", "basis_id": "Full-Time"}, {"vacancy_id": "2", "job_title": "Muslim Chaplain", "job_description": "Pastoral support", "app_close_d": "20260220"}]}
@@ -349,14 +340,11 @@ def test_portsmouth_jobs_source_filters_related_roles(
     monkeypatch.setattr("requests.get", _fake_get)
     source = PortsmouthJobsSource(SourceSettings(id="portsmouth_jobs", type="portsmouth_jobs", url="https://mss.port.ac.uk/ce0732li_webrecruitment/wrd/run/etrec179gf.open?wvid=217310N6lo"))
     opportunities = source.fetch()
-    with capsys.disabled():
-        print(f"[parsed] portsmouth_jobs: {opportunities[0].title} | {opportunities[0].url}")
     assert [item.title for item in opportunities] == ["Research Software Engineer"]
 
 
 def test_leverhulme_listings_source_falls_back_to_closing_dates(
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     listings_html = b"<html><body><h1>Grant listings</h1></body></html>"
     closing_dates_html = b"""
@@ -388,8 +376,6 @@ def test_leverhulme_listings_source_falls_back_to_closing_dates(
     )
     opportunities = source.fetch()
 
-    with capsys.disabled():
-        print(f"[parsed] leverhulme_listings: {opportunities[0].title} | {opportunities[0].url}")
     assert any("closing-dates" in url for url in calls)
     assert len(opportunities) == 3
     assert opportunities[0].title == "Early Career Fellowships"
