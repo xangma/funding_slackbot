@@ -8,6 +8,7 @@ import pytest
 from funding_slackbot.config import SourceSettings
 from funding_slackbot.sources.rss_source import (
     InnovationFundingSearchSource,
+    PortsmouthJobsSource,
     RssSource,
     WellcomeSchemesSource,
 )
@@ -18,6 +19,7 @@ class _DummyResponse:
     def __init__(self, content: bytes) -> None:
         self.content = content
         self.text = content.decode("utf-8")
+        self.url = "https://example.test/wrd/run/etrec179gf.open"
 
     def raise_for_status(self) -> None:
         return None
@@ -324,3 +326,24 @@ def test_parser_smoke_prints_one_parsed_grant_per_source(
     assert ukri.title == "AI for health systems"
     assert wellcome.title == "Wellcome Career Development Awards"
     assert innovation.title == "Unique Innovation Competition"
+
+
+def test_portsmouth_jobs_source_filters_related_roles(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    html = b'<input name="WVID.STD_HID_FLDS.ET_BASE.1-1" value="217310N6lo"><input name="SESSION.STD_HID_FLDS.ET_BASE.1-1" value="SESSION123">'
+    payload = {"results": [{"vacancy_id": "1", "job_title": "Research Software Engineer", "job_description": "Physics and computing support", "app_close_d": "20260220", "salary": "50000", "basis_id": "Full-Time"}, {"vacancy_id": "2", "job_title": "Muslim Chaplain", "job_description": "Pastoral support", "app_close_d": "20260220"}]}
+
+    def _fake_get(url: str, *args, **kwargs) -> _DummyResponse:
+        if "etrec179gf.open" in url:
+            return _DummyResponse(html)
+        if "etrec106gf.json" in url:
+            return _DummyResponse(json.dumps(payload).encode("utf-8"))
+        raise AssertionError(url)
+
+    monkeypatch.setattr("requests.get", _fake_get)
+    source = PortsmouthJobsSource(SourceSettings(id="portsmouth_jobs", type="portsmouth_jobs", url="https://mss.port.ac.uk/ce0732li_webrecruitment/wrd/run/etrec179gf.open?wvid=217310N6lo"))
+    opportunities = source.fetch()
+    with capsys.disabled():
+        print(f"[parsed] portsmouth_jobs: {opportunities[0].title} | {opportunities[0].url}")
+    assert [item.title for item in opportunities] == ["Research Software Engineer"]
