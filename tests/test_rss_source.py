@@ -6,7 +6,11 @@ from datetime import timezone
 import pytest
 
 from funding_slackbot.config import SourceSettings
-from funding_slackbot.sources.rss_source import RssSource, WellcomeSchemesSource
+from funding_slackbot.sources.rss_source import (
+    InnovationFundingSearchSource,
+    RssSource,
+    WellcomeSchemesSource,
+)
 from funding_slackbot.utils.url_utils import canonicalize_url
 
 
@@ -142,3 +146,181 @@ def test_wellcome_source_fetches_open_schemes(monkeypatch: pytest.MonkeyPatch) -
     assert opportunity.url == canonicalize_url(
         "https://wellcome.org/research-funding/schemes/wellcome-career-development-awards/"
     )
+
+
+def test_innovation_source_dedupes_against_ukri_titles(monkeypatch: pytest.MonkeyPatch) -> None:
+    competitions_html = b"""
+    <html><body>
+      <ul class="govuk-list">
+        <li>
+          <h2 class="govuk-heading-m">
+            <a class="govuk-link" href="/competition/2397/overview/abc">
+              Zero Emission Flight Demonstrator Round 1
+            </a>
+          </h2>
+          <div class="wysiwyg-styles">Duplicate with UKRI title wording.</div>
+          <dl class="date-definition-list">
+            <dt>Opens:</dt><dd>16 February 2026</dd>
+            <dt>Closes:</dt><dd>1 April 2026</dd>
+          </dl>
+        </li>
+        <li>
+          <h2 class="govuk-heading-m">
+            <a class="govuk-link" href="/competition/2401/overview/xyz">Unique Innovation Competition</a>
+          </h2>
+          <div class="wysiwyg-styles">Only on innovation funding search.</div>
+          <dl class="date-definition-list">
+            <dt>Opened:</dt><dd>12 February 2026</dd>
+            <dt>Closes:</dt><dd>20 April 2026</dd>
+          </dl>
+        </li>
+      </ul>
+    </body></html>
+    """
+    ukri_feed = b"""<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0">
+      <channel>
+        <title>Example</title>
+        <item>
+          <title>Zero Emission Flight Demonstrator round one</title>
+          <link>https://www.ukri.org/opportunity/zero-emission-flight-demonstrator-round-one/</link>
+          <description>Innovate UK opportunity</description>
+        </item>
+      </channel>
+    </rss>
+    """
+
+    def _fake_get(url: str, *args, **kwargs) -> _DummyResponse:
+        if "ukri.org/opportunity/feed" in url:
+            return _DummyResponse(ukri_feed)
+        if "apply-for-innovation-funding.service.gov.uk/competition/search" in url:
+            return _DummyResponse(competitions_html)
+        raise AssertionError(url)
+
+    monkeypatch.setattr("requests.get", _fake_get)
+
+    source = InnovationFundingSearchSource(
+        SourceSettings(
+            id="innovation_funding_search",
+            type="innovation_funding_search",
+            url="https://apply-for-innovation-funding.service.gov.uk/competition/search",
+        )
+    )
+
+    opportunities = source.fetch()
+
+    assert len(opportunities) == 1
+    opportunity = opportunities[0]
+    assert opportunity.title == "Unique Innovation Competition"
+    assert opportunity.external_id == "innovation-competition:2401"
+    assert opportunity.funder == "Innovate UK"
+    assert opportunity.closing_date is not None
+    assert opportunity.closing_date.tzinfo == timezone.utc
+
+
+def test_parser_smoke_prints_one_parsed_grant_per_source(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ukri_xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0">
+      <channel>
+        <title>Example</title>
+        <item>
+          <title>AI for health systems</title>
+          <link>https://www.ukri.org/opportunity/example-opportunity/?utm_source=rss</link>
+          <guid>https://www.ukri.org/opportunity/example-opportunity/?utm_source=rss</guid>
+          <pubDate>Tue, 06 Jan 2026 10:00:00 +0000</pubDate>
+          <description><![CDATA[<p>Closing date: 30 March 2026</p>]]></description>
+        </item>
+      </channel>
+    </rss>
+    """
+    wellcome_payload = {
+        "props": {
+            "pageProps": {
+                "initialListings": [
+                    {
+                        "id": "5596",
+                        "url": "/research-funding/schemes/wellcome-career-development-awards/",
+                        "title": "Wellcome Career Development Awards ",
+                        "listing_summary": "<p>Funding for mid-career researchers.</p>",
+                        "scheme_accepting_applications": "Open to applications",
+                        "scheme_closes_for_applications": "26 March 2026",
+                    }
+                ]
+            }
+        }
+    }
+    wellcome_html = (
+        "<html><body>"
+        '<script id="__NEXT_DATA__" type="application/json">'
+        f"{json.dumps(wellcome_payload)}"
+        "</script>"
+        "</body></html>"
+    ).encode("utf-8")
+    innovation_html = b"""
+    <html><body>
+      <ul class="govuk-list">
+        <li>
+          <h2 class="govuk-heading-m">
+            <a class="govuk-link" href="/competition/2401/overview/xyz">Unique Innovation Competition</a>
+          </h2>
+          <div class="wysiwyg-styles">Only on innovation funding search.</div>
+          <dl class="date-definition-list">
+            <dt>Opened:</dt><dd>12 February 2026</dd>
+            <dt>Closes:</dt><dd>20 April 2026</dd>
+          </dl>
+        </li>
+      </ul>
+    </body></html>
+    """
+
+    def _fake_get(url: str, *args, **kwargs) -> _DummyResponse:
+        if "wellcome.org/research-funding/schemes" in url:
+            return _DummyResponse(wellcome_html)
+        if "apply-for-innovation-funding.service.gov.uk/competition/search" in url:
+            return _DummyResponse(innovation_html)
+        if "ukri.org/opportunity/feed" in url:
+            return _DummyResponse(ukri_xml)
+        raise AssertionError(url)
+
+    monkeypatch.setattr("requests.get", _fake_get)
+
+    ukri_source = RssSource(
+        SourceSettings(
+            id="ukri_rss",
+            type="rss",
+            url="https://www.ukri.org/opportunity/feed/",
+        )
+    )
+    wellcome_source = WellcomeSchemesSource(
+        SourceSettings(
+            id="wellcome_schemes",
+            type="wellcome_schemes",
+            url="https://wellcome.org/research-funding/schemes",
+        )
+    )
+    innovation_source = InnovationFundingSearchSource(
+        SourceSettings(
+            id="innovation_funding_search",
+            type="innovation_funding_search",
+            url="https://apply-for-innovation-funding.service.gov.uk/competition/search",
+        )
+    )
+
+    ukri = ukri_source.fetch()[0]
+    wellcome = wellcome_source.fetch()[0]
+    innovation = innovation_source.fetch()[0]
+
+    # Kept explicit for developers running pytest to verify parser outputs quickly.
+    with capsys.disabled():
+        print(f"[parsed] ukri_rss: {ukri.title} | {ukri.url}")
+        print(f"[parsed] wellcome_schemes: {wellcome.title} | {wellcome.url}")
+        print(
+            "[parsed] innovation_funding_search: "
+            f"{innovation.title} | {innovation.url}"
+        )
+
+    assert ukri.title == "AI for health systems"
+    assert wellcome.title == "Wellcome Career Development Awards"
+    assert innovation.title == "Unique Innovation Competition"

@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import time
+from difflib import SequenceMatcher
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urljoin
@@ -29,6 +30,32 @@ _NEXT_DATA_SCRIPT = re.compile(
     r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>',
     re.IGNORECASE | re.DOTALL,
 )
+_COMPETITION_CARD = re.compile(
+    r"<li>\s*<h2[^>]*>.*?<a[^>]+href=\"(?P<href>/competition/[^\"]+)\"[^>]*>"
+    r"(?P<title>.*?)</a>.*?<div class=\"wysiwyg-styles[^>]*>(?P<summary>.*?)</div>"
+    r".*?<dl class=\"date-definition-list[^>]*>(?P<dates>.*?)</dl>",
+    re.IGNORECASE | re.DOTALL,
+)
+_DATE_PAIR = re.compile(
+    r"<dt>\s*(?P<label>Opened|Opens|Closes)\s*:\s*</dt>\s*<dd[^>]*>(?P<value>.*?)</dd>",
+    re.IGNORECASE | re.DOTALL,
+)
+_COMPETITION_ID = re.compile(r"/competition/(?P<id>\d+)/")
+_TITLE_CLEAN = re.compile(r"[^a-z0-9]+")
+_NUMBER_WORDS = {
+    "zero": "0",
+    "one": "1",
+    "two": "2",
+    "three": "3",
+    "four": "4",
+    "five": "5",
+    "six": "6",
+    "seven": "7",
+    "eight": "8",
+    "nine": "9",
+    "ten": "10",
+}
+_DEFAULT_UKRI_FEED_URL = "https://www.ukri.org/opportunity/feed/"
 
 
 class RssSource(Source):
@@ -176,6 +203,85 @@ class WellcomeSchemesSource(Source):
         )
 
 
+class InnovationFundingSearchSource(Source):
+    def __init__(self, settings: SourceSettings) -> None:
+        super().__init__(source_id=settings.id)
+        self.url = settings.url
+        timeout_raw = settings.options.get("timeout_seconds", 30)
+        self.timeout_seconds = int(timeout_raw) if timeout_raw is not None else 30
+        raw_ukri_url = str(settings.options.get("ukri_feed_url", _DEFAULT_UKRI_FEED_URL)).strip()
+        self.ukri_feed_url = raw_ukri_url or _DEFAULT_UKRI_FEED_URL
+
+    def fetch(self) -> list[Opportunity]:
+        headers = {"User-Agent": "funding-slackbot/0.1 (+https://github.com/)"}
+        response = requests.get(self.url, timeout=self.timeout_seconds, headers=headers)
+        response.raise_for_status()
+
+        cards = _extract_innovation_competition_cards(response.text)
+        ukri_title_keys = self._fetch_ukri_title_keys()
+
+        opportunities: list[Opportunity] = []
+        for card in cards:
+            title_key = _normalize_competition_title(card["title"])
+            if title_key and _matches_ukri_title(title_key, ukri_title_keys):
+                continue
+
+            raw_url = urljoin(self.url, card["url"])
+            url = canonicalize_url(raw_url)
+            competition_id = _extract_competition_id(card["url"])
+            external_id = (
+                f"innovation-competition:{competition_id}"
+                if competition_id
+                else derive_external_id(None, url)
+            )
+
+            closing_date = parse_datetime_utc(card.get("closes"))
+            opening_date = parse_datetime_utc(card.get("opens"))
+            summary = _html_to_text(card.get("summary", ""))
+
+            opportunities.append(
+                Opportunity(
+                    source_id=self.source_id,
+                    external_id=external_id,
+                    title=card["title"],
+                    url=url,
+                    published_at=opening_date,
+                    summary=summary,
+                    raw=_to_serializable_dict(card),
+                    closing_date=closing_date,
+                    opening_date=opening_date,
+                    funder="Innovate UK",
+                    funding_type="Competition",
+                    total_fund=None,
+                )
+            )
+
+        opportunities.sort(
+            key=lambda item: item.closing_date
+            or datetime.max.replace(tzinfo=timezone.utc)
+        )
+        return opportunities
+
+    def _fetch_ukri_title_keys(self) -> list[str]:
+        headers = {"User-Agent": "funding-slackbot/0.1 (+https://github.com/)"}
+        try:
+            response = requests.get(
+                self.ukri_feed_url, timeout=self.timeout_seconds, headers=headers
+            )
+            response.raise_for_status()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to fetch UKRI feed for dedupe: %s", exc)
+            return []
+
+        parsed = feedparser.parse(response.content)
+        title_keys: list[str] = []
+        for entry in parsed.entries:
+            title = _normalize_competition_title(str(entry.get("title", "")))
+            if title:
+                title_keys.append(title)
+        return title_keys
+
+
 def _extract_tags(entry: Any) -> list[str]:
     tags = entry.get("tags")
     if not isinstance(tags, list):
@@ -279,6 +385,50 @@ def _extract_wellcome_listings(page_text: str) -> list[dict[str, Any]]:
     return [item for item in listings if isinstance(item, dict)]
 
 
+def _extract_innovation_competition_cards(page_text: str) -> list[dict[str, str]]:
+    cards: list[dict[str, str]] = []
+    for match in _COMPETITION_CARD.finditer(page_text):
+        dates = {
+            item.group("label").lower(): _html_to_text(item.group("value"))
+            for item in _DATE_PAIR.finditer(match.group("dates"))
+        }
+        cards.append(
+            {
+                "url": _normalize_whitespace(match.group("href")),
+                "title": _html_to_text(match.group("title")),
+                "summary": match.group("summary"),
+                "opens": dates.get("opens") or dates.get("opened") or "",
+                "closes": dates.get("closes") or "",
+            }
+        )
+    return cards
+
+
+def _extract_competition_id(url_value: str) -> str | None:
+    match = _COMPETITION_ID.search(url_value)
+    if match is None:
+        return None
+    return match.group("id")
+
+
+def _normalize_competition_title(value: str) -> str:
+    normalized = _html_to_text(value).lower()
+    normalized = normalized.replace("eoi", "expression of interest")
+    for word, digit in _NUMBER_WORDS.items():
+        normalized = re.sub(rf"\b{word}\b", digit, normalized)
+    normalized = _TITLE_CLEAN.sub(" ", normalized)
+    return _normalize_whitespace(normalized)
+
+
+def _matches_ukri_title(candidate: str, ukri_titles: list[str]) -> bool:
+    for ukri_title in ukri_titles:
+        if candidate == ukri_title:
+            return True
+        if SequenceMatcher(None, candidate, ukri_title).ratio() >= 0.92:
+            return True
+    return False
+
+
 @register_source("rss")
 def _build_rss_source(settings: SourceSettings) -> Source:
     return RssSource(settings)
@@ -287,3 +437,8 @@ def _build_rss_source(settings: SourceSettings) -> Source:
 @register_source("wellcome_schemes")
 def _build_wellcome_schemes_source(settings: SourceSettings) -> Source:
     return WellcomeSchemesSource(settings)
+
+
+@register_source("innovation_funding_search")
+def _build_innovation_funding_search_source(settings: SourceSettings) -> Source:
+    return InnovationFundingSearchSource(settings)

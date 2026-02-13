@@ -5,6 +5,9 @@ sources:
   - id: wellcome_schemes
     type: wellcome_schemes
     url: https://wellcome.org/research-funding/schemes
+  - id: innovation_funding_search
+    type: innovation_funding_search
+    url: https://apply-for-innovation-funding.service.gov.uk/competition/search
 
 filters:
   include_keywords:
