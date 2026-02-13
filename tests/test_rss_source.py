@@ -6,6 +6,8 @@ from datetime import timezone
 import pytest
 
 from funding_slackbot.config import SourceSettings
+from funding_slackbot.models import Opportunity
+from funding_slackbot.notifiers.slack_webhook import render_slack_message_text
 from funding_slackbot.sources.rss_source import (
     InnovationFundingSearchSource,
     LeverhulmeListingsSource,
@@ -28,6 +30,29 @@ class _DummyResponse:
 
     def raise_for_status(self) -> None:
         return None
+
+
+def _print_parsed_example(
+    *,
+    pytestconfig: pytest.Config,
+    capsys: pytest.CaptureFixture[str],
+    opportunity: Opportunity,
+) -> None:
+    if not _is_verbose_requested(pytestconfig):
+        return
+    preview_reason = "parser preview (filter not evaluated)"
+    with capsys.disabled():
+        print(f"[parsed] {opportunity.source_id}:")
+        print(render_slack_message_text(opportunity, preview_reason))
+        print("")
+
+
+def _is_verbose_requested(pytestconfig: pytest.Config) -> bool:
+    invocation_args = pytestconfig.invocation_params.args
+    for arg in invocation_args:
+        if arg == "--verbose" or (arg.startswith("-") and set(arg[1:]) == {"v"}):
+            return True
+    return pytestconfig.getoption("verbose") > 0
 
 
 def test_rss_parsing_maps_to_opportunity_and_uses_stable_identifier(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -227,6 +252,8 @@ def test_innovation_source_dedupes_against_ukri_titles(monkeypatch: pytest.Monke
 
 def test_parser_smoke_prints_one_parsed_grant_per_source(
     monkeypatch: pytest.MonkeyPatch,
+    pytestconfig: pytest.Config,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     ukri_xml = b"""<?xml version="1.0" encoding="UTF-8"?>
     <rss version="2.0">
@@ -319,6 +346,22 @@ def test_parser_smoke_prints_one_parsed_grant_per_source(
     wellcome = wellcome_source.fetch()[0]
     innovation = innovation_source.fetch()[0]
 
+    _print_parsed_example(
+        pytestconfig=pytestconfig,
+        capsys=capsys,
+        opportunity=ukri,
+    )
+    _print_parsed_example(
+        pytestconfig=pytestconfig,
+        capsys=capsys,
+        opportunity=wellcome,
+    )
+    _print_parsed_example(
+        pytestconfig=pytestconfig,
+        capsys=capsys,
+        opportunity=innovation,
+    )
+
     assert ukri.title == "AI for health systems"
     assert wellcome.title == "Wellcome Career Development Awards"
     assert innovation.title == "Unique Innovation Competition"
@@ -326,6 +369,8 @@ def test_parser_smoke_prints_one_parsed_grant_per_source(
 
 def test_portsmouth_jobs_source_filters_related_roles(
     monkeypatch: pytest.MonkeyPatch,
+    pytestconfig: pytest.Config,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     html = b'<input name="WVID.STD_HID_FLDS.ET_BASE.1-1" value="217310N6lo"><input name="SESSION.STD_HID_FLDS.ET_BASE.1-1" value="SESSION123">'
     payload = {"results": [{"vacancy_id": "1", "job_title": "Research Software Engineer", "job_description": "Physics and computing support", "app_close_d": "20260220", "salary": "50000", "basis_id": "Full-Time"}, {"vacancy_id": "2", "job_title": "Muslim Chaplain", "job_description": "Pastoral support", "app_close_d": "20260220"}]}
@@ -340,11 +385,18 @@ def test_portsmouth_jobs_source_filters_related_roles(
     monkeypatch.setattr("requests.get", _fake_get)
     source = PortsmouthJobsSource(SourceSettings(id="portsmouth_jobs", type="portsmouth_jobs", url="https://mss.port.ac.uk/ce0732li_webrecruitment/wrd/run/etrec179gf.open?wvid=217310N6lo"))
     opportunities = source.fetch()
+    _print_parsed_example(
+        pytestconfig=pytestconfig,
+        capsys=capsys,
+        opportunity=opportunities[0],
+    )
     assert [item.title for item in opportunities] == ["Research Software Engineer"]
 
 
 def test_leverhulme_listings_source_falls_back_to_closing_dates(
     monkeypatch: pytest.MonkeyPatch,
+    pytestconfig: pytest.Config,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     listings_html = b"<html><body><h1>Grant listings</h1></body></html>"
     closing_dates_html = b"""
@@ -375,6 +427,11 @@ def test_leverhulme_listings_source_falls_back_to_closing_dates(
         )
     )
     opportunities = source.fetch()
+    _print_parsed_example(
+        pytestconfig=pytestconfig,
+        capsys=capsys,
+        opportunity=opportunities[0],
+    )
 
     assert any("closing-dates" in url for url in calls)
     assert len(opportunities) == 3

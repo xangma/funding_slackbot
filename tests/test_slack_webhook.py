@@ -20,25 +20,64 @@ def _opportunity(**overrides: object) -> Opportunity:
         summary="Funding call for AI projects",
         raw={},
         closing_date=datetime(2026, 3, 30, 17, 0, tzinfo=timezone.utc),
+        opening_date=datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+        funder="MRC",
+        funding_type="Grant",
+        total_fund="GBP 1000000",
     )
     for key, value in overrides.items():
         setattr(base, key, value)
     return base
 
 
-def test_payload_includes_explicit_deadline_section_and_fallback_text() -> None:
+def test_payload_includes_consistent_metadata_with_source_display_name() -> None:
     payload = build_slack_payload(_opportunity(), "keywords: AI")
 
-    assert "Deadline: 2026-03-30 17:00 UTC" in payload["text"]
-    assert payload["blocks"][1]["text"]["text"] == "*Deadline:* 2026-03-30 17:00 UTC"
-    assert "*Source:* ukri_rss" in payload["blocks"][2]["elements"][0]["text"]
+    assert "Closes: 2026-03-30 17:00 UTC" in payload["text"]
+    assert "Source: UKRI Funding Finder" in payload["text"]
+    assert payload["blocks"][1]["text"]["text"] == "\n".join(
+        [
+            "*Source:* UKRI Funding Finder",
+            "*Funder:* MRC",
+            "*Funding Type:* Grant",
+            "*Total Fund:* GBP 1000000",
+            "*Opens:* 2026-01-01",
+            "*Closes:* 2026-03-30 17:00 UTC",
+            "*Published:* 2026-01-10 09:00 UTC",
+        ]
+    )
 
 
-def test_payload_uses_not_specified_when_deadline_missing() -> None:
-    payload = build_slack_payload(_opportunity(closing_date=None), "keywords: AI")
+def test_payload_uses_not_specified_for_missing_metadata() -> None:
+    payload = build_slack_payload(
+        _opportunity(
+            closing_date=None,
+            opening_date=None,
+            published_at=None,
+            funder=None,
+            funding_type=None,
+            total_fund=None,
+        ),
+        "keywords: AI",
+    )
 
-    assert "Deadline: Not specified" in payload["text"]
-    assert payload["blocks"][1]["text"]["text"] == "*Deadline:* Not specified"
+    assert "Closes: Not specified" in payload["text"]
+    assert "*Funder:* Not specified" in payload["blocks"][1]["text"]["text"]
+    assert "*Funding Type:* Not specified" in payload["blocks"][1]["text"]["text"]
+    assert "*Total Fund:* Not specified" in payload["blocks"][1]["text"]["text"]
+    assert "*Opens:* Not specified" in payload["blocks"][1]["text"]["text"]
+    assert "*Closes:* Not specified" in payload["blocks"][1]["text"]["text"]
+    assert "*Published:* Not specified" in payload["blocks"][1]["text"]["text"]
+
+
+def test_payload_formats_date_only_fields_without_midnight_time() -> None:
+    payload = build_slack_payload(
+        _opportunity(closing_date=datetime(2026, 3, 30, 0, 0, tzinfo=timezone.utc)),
+        "keywords: AI",
+    )
+
+    assert "Closes: 2026-03-30" in payload["text"]
+    assert "*Closes:* 2026-03-30" in payload["blocks"][1]["text"]["text"]
 
 
 def test_render_slack_message_text_matches_payload_text_content() -> None:
@@ -47,10 +86,15 @@ def test_render_slack_message_text_matches_payload_text_content() -> None:
 
     expected = "\n".join(
         [
-            "AI opportunity (https://www.ukri.org/opportunity/test) | Deadline: 2026-03-30 17:00 UTC",
+            "AI opportunity (https://www.ukri.org/opportunity/test) | Closes: 2026-03-30 17:00 UTC | Source: UKRI Funding Finder",
             "*<https://www.ukri.org/opportunity/test|AI opportunity>*",
-            "*Deadline:* 2026-03-30 17:00 UTC",
-            "*Published:* 2026-01-10 09:00 UTC | *Source:* ukri_rss",
+            "*Source:* UKRI Funding Finder",
+            "*Funder:* MRC",
+            "*Funding Type:* Grant",
+            "*Total Fund:* GBP 1000000",
+            "*Opens:* 2026-01-01",
+            "*Closes:* 2026-03-30 17:00 UTC",
+            "*Published:* 2026-01-10 09:00 UTC",
             "*Why it matched:* keywords: AI",
             "Funding call for AI projects",
         ]

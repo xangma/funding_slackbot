@@ -3,9 +3,17 @@ from __future__ import annotations
 import requests
 
 from funding_slackbot.models import Opportunity
-from funding_slackbot.utils.datetime_utils import format_datetime
+from funding_slackbot.utils.datetime_utils import format_datetime, to_utc
 
 from .base import Notifier
+
+_SOURCE_DISPLAY_NAMES = {
+    "ukri_rss": "UKRI Funding Finder",
+    "wellcome_schemes": "Wellcome Schemes",
+    "leverhulme_listings": "Leverhulme Trust Listings",
+    "innovation_funding_search": "Innovation Funding Search",
+    "portsmouth_jobs": "University of Portsmouth Jobs",
+}
 
 
 class SlackWebhookNotifier(Notifier):
@@ -27,24 +35,31 @@ class SlackWebhookNotifier(Notifier):
 
 
 def build_slack_payload(opportunity: Opportunity, match_reason: str) -> dict:
+    source_display = _source_display_name(opportunity.source_id)
     title_link = (
         f"*<{opportunity.url}|{opportunity.title}>*"
         if opportunity.url
         else f"*{opportunity.title}*"
     )
-    deadline_text = _format_deadline(opportunity)
-
-    metadata_parts = []
-    if opportunity.published_at:
-        metadata_parts.append(f"*Published:* {format_datetime(opportunity.published_at)}")
-    metadata_parts.append(f"*Source:* {opportunity.source_id}")
+    closes_text = _format_optional_datetime(opportunity.closing_date)
+    metadata_text = "\n".join(
+        [
+            f"*Source:* {source_display}",
+            f"*Funder:* {_format_optional_text(opportunity.funder)}",
+            f"*Funding Type:* {_format_optional_text(opportunity.funding_type)}",
+            f"*Total Fund:* {_format_optional_text(opportunity.total_fund)}",
+            f"*Opens:* {_format_optional_datetime(opportunity.opening_date)}",
+            f"*Closes:* {closes_text}",
+            f"*Published:* {_format_optional_datetime(opportunity.published_at)}",
+        ]
+    )
 
     summary = opportunity.summary
     if len(summary) > 300:
         summary = f"{summary[:297]}..."
 
     text = f"{opportunity.title} ({opportunity.url})" if opportunity.url else opportunity.title
-    text = f"{text} | Deadline: {deadline_text}"
+    text = f"{text} | Closes: {closes_text} | Source: {source_display}"
 
     return {
         "text": text,
@@ -60,17 +75,8 @@ def build_slack_payload(opportunity: Opportunity, match_reason: str) -> dict:
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*Deadline:* {deadline_text}",
+                    "text": metadata_text,
                 },
-            },
-            {
-                "type": "context",
-                "elements": [
-                    {
-                        "type": "mrkdwn",
-                        "text": " | ".join(metadata_parts),
-                    }
-                ],
             },
             {
                 "type": "section",
@@ -129,7 +135,24 @@ def _build_payload(opportunity: Opportunity, match_reason: str) -> dict:
     return build_slack_payload(opportunity, match_reason)
 
 
-def _format_deadline(opportunity: Opportunity) -> str:
-    if opportunity.closing_date is None:
+def _format_optional_text(value: str | None) -> str:
+    normalized = (value or "").strip()
+    return normalized or "Not specified"
+
+
+def _format_optional_datetime(value) -> str:
+    if value is None:
         return "Not specified"
-    return format_datetime(opportunity.closing_date)
+    value_utc = to_utc(value)
+    if (
+        value_utc.hour == 0
+        and value_utc.minute == 0
+        and value_utc.second == 0
+        and value_utc.microsecond == 0
+    ):
+        return value_utc.strftime("%Y-%m-%d")
+    return format_datetime(value_utc)
+
+
+def _source_display_name(source_id: str) -> str:
+    return _SOURCE_DISPLAY_NAMES.get(source_id, source_id)
