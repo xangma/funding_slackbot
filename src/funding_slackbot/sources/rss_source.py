@@ -72,6 +72,7 @@ _NUMBER_WORDS = {
 _DEFAULT_UKRI_FEED_URL = "https://www.ukri.org/opportunity/feed/"
 _DEFAULT_PORTSMOUTH_INCLUDE_KEYWORDS = ("research software engineer", "research software", "postdoctoral", "post-doc", "lecturer", "senior lecturer", "computing", "computer science", "software engineering", "physics", "astrophysics")
 _DEFAULT_PORTSMOUTH_EXCLUDE_KEYWORDS = ("intern", "placement", "studentship", "phd", "doctoral", "undergraduate")
+_LEVERHULME_NON_FATAL_STATUS_CODES = {403, 404}
 
 
 class RssSource(Source):
@@ -228,18 +229,27 @@ class LeverhulmeListingsSource(Source):
 
     def fetch(self) -> list[Opportunity]:
         headers = {"User-Agent": "funding-slackbot/0.1 (+https://github.com/)"}
-        response = requests.get(self.url, timeout=self.timeout_seconds, headers=headers)
-        response.raise_for_status()
-        page_url = response.url
-        rows = _extract_leverhulme_rows(response.text)
+        response = self._fetch_page(self.url, headers)
+        page_url = self.url
+        rows: list[dict[str, str]] = []
+        if response is not None:
+            page_url = response.url
+            rows = _extract_leverhulme_rows(response.text)
 
         if not rows:
             fallback_url = urljoin(page_url, "/closing-dates")
             if canonicalize_url(fallback_url) != canonicalize_url(page_url):
-                fallback = requests.get(fallback_url, timeout=self.timeout_seconds, headers=headers)
-                fallback.raise_for_status()
-                page_url = fallback.url
-                rows = _extract_leverhulme_rows(fallback.text)
+                fallback = self._fetch_page(fallback_url, headers)
+                if fallback is not None:
+                    page_url = fallback.url
+                    rows = _extract_leverhulme_rows(fallback.text)
+
+        if not rows and response is None:
+            logger.warning(
+                "Leverhulme source unavailable at %s; returning 0 opportunities",
+                self.url,
+            )
+            return []
 
         opportunities: list[Opportunity] = []
         for row in rows:
@@ -281,6 +291,26 @@ class LeverhulmeListingsSource(Source):
             or datetime.max.replace(tzinfo=timezone.utc)
         )
         return opportunities
+
+    def _fetch_page(
+        self,
+        url_value: str,
+        headers: dict[str, str],
+    ) -> requests.Response | None:
+        try:
+            response = requests.get(url_value, timeout=self.timeout_seconds, headers=headers)
+            response.raise_for_status()
+            return response
+        except requests.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            if status_code in _LEVERHULME_NON_FATAL_STATUS_CODES:
+                logger.warning(
+                    "Leverhulme request returned %s for %s; trying fallback if available",
+                    status_code,
+                    url_value,
+                )
+                return None
+            raise
 
 
 class InnovationFundingSearchSource(Source):

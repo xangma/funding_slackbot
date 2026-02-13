@@ -4,6 +4,7 @@ import json
 from datetime import timezone
 
 import pytest
+import requests
 
 from funding_slackbot.config import SourceSettings
 from funding_slackbot.models import Opportunity
@@ -23,12 +24,19 @@ class _DummyResponse:
         self,
         content: bytes,
         url: str = "https://example.test/wrd/run/etrec179gf.open",
+        status_code: int = 200,
     ) -> None:
         self.content = content
         self.text = content.decode("utf-8")
         self.url = url
+        self.status_code = status_code
 
     def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise requests.HTTPError(
+                f"{self.status_code} Client Error: test fixture",
+                response=self,
+            )
         return None
 
 
@@ -438,3 +446,40 @@ def test_leverhulme_listings_source_falls_back_to_closing_dates(
     assert opportunities[0].title == "Early Career Fellowships"
     assert opportunities[0].closing_date is not None
     assert sum(1 for item in opportunities if item.title == "Research Project Grants") == 2
+
+
+def test_leverhulme_listings_source_uses_fallback_when_listings_forbidden(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closing_dates_html = b"""
+    <html><body>
+      <table>
+        <tr><td><a href="/early-career-fellowships">Early Career Fellowships</a></td><td>19 February 2026</td></tr>
+      </table>
+    </body></html>
+    """
+    calls: list[str] = []
+
+    def _fake_get(url: str, *args, **kwargs) -> _DummyResponse:
+        calls.append(url)
+        if "leverhulme.ac.uk/listings" in url:
+            return _DummyResponse(b"forbidden", url=url, status_code=403)
+        if "leverhulme.ac.uk/closing-dates" in url:
+            return _DummyResponse(closing_dates_html, url=url)
+        raise AssertionError(url)
+
+    monkeypatch.setattr("requests.get", _fake_get)
+
+    source = LeverhulmeListingsSource(
+        SourceSettings(
+            id="leverhulme_listings",
+            type="leverhulme_listings",
+            url="https://www.leverhulme.ac.uk/listings",
+        )
+    )
+    opportunities = source.fetch()
+
+    assert any("listings" in url for url in calls)
+    assert any("closing-dates" in url for url in calls)
+    assert len(opportunities) == 1
+    assert opportunities[0].title == "Early Career Fellowships"
