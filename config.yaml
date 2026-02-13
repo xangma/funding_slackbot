@@ -8,6 +8,9 @@ sources:
   - id: innovation_funding_search
     type: innovation_funding_search
     url: https://apply-for-innovation-funding.service.gov.uk/competition/search
+  - id: leverhulme_listings
+    type: leverhulme_listings
+    url: https://www.leverhulme.ac.uk/listings
 
 filters:
   include_keywords:
