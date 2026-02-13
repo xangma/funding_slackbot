@@ -8,6 +8,7 @@ import pytest
 from funding_slackbot.config import SourceSettings
 from funding_slackbot.sources.rss_source import (
     InnovationFundingSearchSource,
+    LeverhulmeListingsSource,
     PortsmouthJobsSource,
     RssSource,
     WellcomeSchemesSource,
@@ -16,10 +17,14 @@ from funding_slackbot.utils.url_utils import canonicalize_url
 
 
 class _DummyResponse:
-    def __init__(self, content: bytes) -> None:
+    def __init__(
+        self,
+        content: bytes,
+        url: str = "https://example.test/wrd/run/etrec179gf.open",
+    ) -> None:
         self.content = content
         self.text = content.decode("utf-8")
-        self.url = "https://example.test/wrd/run/etrec179gf.open"
+        self.url = url
 
     def raise_for_status(self) -> None:
         return None
@@ -347,3 +352,46 @@ def test_portsmouth_jobs_source_filters_related_roles(
     with capsys.disabled():
         print(f"[parsed] portsmouth_jobs: {opportunities[0].title} | {opportunities[0].url}")
     assert [item.title for item in opportunities] == ["Research Software Engineer"]
+
+
+def test_leverhulme_listings_source_falls_back_to_closing_dates(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    listings_html = b"<html><body><h1>Grant listings</h1></body></html>"
+    closing_dates_html = b"""
+    <html><body>
+      <table>
+        <tr><td><a href="/early-career-fellowships">Early Career Fellowships</a></td><td>19 February 2026</td></tr>
+        <tr><td><a href="/research-project-grants">Research Project Grants</a></td><td><p>1 July 2026</p><p>1 July 2026</p><p>1 September 2026</p></td></tr>
+      </table>
+    </body></html>
+    """
+    calls: list[str] = []
+
+    def _fake_get(url: str, *args, **kwargs) -> _DummyResponse:
+        calls.append(url)
+        if "leverhulme.ac.uk/listings" in url:
+            return _DummyResponse(listings_html, url=url)
+        if "leverhulme.ac.uk/closing-dates" in url:
+            return _DummyResponse(closing_dates_html, url=url)
+        raise AssertionError(url)
+
+    monkeypatch.setattr("requests.get", _fake_get)
+
+    source = LeverhulmeListingsSource(
+        SourceSettings(
+            id="leverhulme_listings",
+            type="leverhulme_listings",
+            url="https://www.leverhulme.ac.uk/listings",
+        )
+    )
+    opportunities = source.fetch()
+
+    with capsys.disabled():
+        print(f"[parsed] leverhulme_listings: {opportunities[0].title} | {opportunities[0].url}")
+    assert any("closing-dates" in url for url in calls)
+    assert len(opportunities) == 3
+    assert opportunities[0].title == "Early Career Fellowships"
+    assert opportunities[0].closing_date is not None
+    assert sum(1 for item in opportunities if item.title == "Research Project Grants") == 2

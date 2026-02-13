@@ -50,6 +50,12 @@ _PORTSMOUTH_SESSION = re.compile(
     r'name="SESSION\.STD_HID_FLDS\.ET_BASE\.[^"]*" value="([^"]+)"',
     re.IGNORECASE,
 )
+_LEVERHULME_ROW = re.compile(
+    r"<tr>\s*<td>\s*<a[^>]+href=\"(?P<href>[^\"]+)\"[^>]*>(?P<title>.*?)</a>\s*</td>\s*"
+    r"<td>(?P<closing>.*?)</td>\s*</tr>",
+    re.IGNORECASE | re.DOTALL,
+)
+_LEVERHULME_FULL_DATE = re.compile(r"\b\d{1,2}\s+[A-Za-z]+\s+\d{4}\b")
 _NUMBER_WORDS = {
     "zero": "0",
     "one": "1",
@@ -211,6 +217,70 @@ class WellcomeSchemesSource(Source):
             funding_type=_normalize_whitespace(str(listing.get("frequency", ""))) or None,
             total_fund=total_fund or None,
         )
+
+
+class LeverhulmeListingsSource(Source):
+    def __init__(self, settings: SourceSettings) -> None:
+        super().__init__(source_id=settings.id)
+        self.url = settings.url
+        timeout_raw = settings.options.get("timeout_seconds", 30)
+        self.timeout_seconds = int(timeout_raw) if timeout_raw is not None else 30
+
+    def fetch(self) -> list[Opportunity]:
+        headers = {"User-Agent": "funding-slackbot/0.1 (+https://github.com/)"}
+        response = requests.get(self.url, timeout=self.timeout_seconds, headers=headers)
+        response.raise_for_status()
+        page_url = response.url
+        rows = _extract_leverhulme_rows(response.text)
+
+        if not rows:
+            fallback_url = urljoin(page_url, "/closing-dates")
+            if canonicalize_url(fallback_url) != canonicalize_url(page_url):
+                fallback = requests.get(fallback_url, timeout=self.timeout_seconds, headers=headers)
+                fallback.raise_for_status()
+                page_url = fallback.url
+                rows = _extract_leverhulme_rows(fallback.text)
+
+        opportunities: list[Opportunity] = []
+        for row in rows:
+            raw_url = urljoin(page_url, row["href"])
+            url = canonicalize_url(raw_url)
+            slug = row["href"].strip("/").replace("/", "-") or "scheme"
+            closing_text = row["closing"]
+            full_dates = _LEVERHULME_FULL_DATE.findall(closing_text)
+
+            if not full_dates:
+                continue
+
+            seen_date_ids: set[str] = set()
+            for date_text in full_dates:
+                closing_date = parse_datetime_utc(date_text)
+                date_id = closing_date.date().isoformat() if closing_date else _normalize_whitespace(date_text)
+                if date_id in seen_date_ids:
+                    continue
+                seen_date_ids.add(date_id)
+                opportunities.append(
+                    Opportunity(
+                        source_id=self.source_id,
+                        external_id=f"leverhulme-scheme:{slug}:{date_id}",
+                        title=row["title"],
+                        url=url,
+                        published_at=None,
+                        summary=f"Leverhulme scheme closing date: {date_text}",
+                        raw=_to_serializable_dict({**row, "closing_date_text": date_text}),
+                        closing_date=closing_date,
+                        opening_date=None,
+                        funder="Leverhulme Trust",
+                        funding_type="Scheme",
+                        total_fund=None,
+                    )
+                )
+
+        opportunities.sort(
+            key=lambda item: item.closing_date
+            or datetime.max.replace(tzinfo=timezone.utc)
+        )
+        return opportunities
 
 
 class InnovationFundingSearchSource(Source):
@@ -514,6 +584,17 @@ def _extract_innovation_competition_cards(page_text: str) -> list[dict[str, str]
     return cards
 
 
+def _extract_leverhulme_rows(page_text: str) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for match in _LEVERHULME_ROW.finditer(page_text):
+        href = _normalize_whitespace(match.group("href"))
+        title = _html_to_text(match.group("title"))
+        closing = _html_to_text(match.group("closing"))
+        if href and title:
+            rows.append({"href": href, "title": title, "closing": closing})
+    return rows
+
+
 def _extract_competition_id(url_value: str) -> str | None:
     match = _COMPETITION_ID.search(url_value)
     if match is None:
@@ -563,6 +644,11 @@ def _build_rss_source(settings: SourceSettings) -> Source:
 @register_source("wellcome_schemes")
 def _build_wellcome_schemes_source(settings: SourceSettings) -> Source:
     return WellcomeSchemesSource(settings)
+
+
+@register_source("leverhulme_listings")
+def _build_leverhulme_listings_source(settings: SourceSettings) -> Source:
+    return LeverhulmeListingsSource(settings)
 
 
 @register_source("innovation_funding_search")

@@ -2,6 +2,9 @@ sources:
   - id: ukri_rss
     type: rss
     url: https://www.ukri.org/opportunity/feed/
+  - id: leverhulme_listings
+    type: leverhulme_listings
+    url: https://www.leverhulme.ac.uk/listings
 
 filters:
   include_keywords:
