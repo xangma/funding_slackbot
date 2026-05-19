@@ -6,7 +6,7 @@ sources:
     timeout_seconds: 30
     retry_attempts: 3
     retry_backoff_seconds: 1
-  - id: wellcome_cms_schemes
+  - id: wellcome_schemes
     type: wellcome_cms_schemes
     url: https://cms.wellcome.org/sitemap.xml
     enabled: true
