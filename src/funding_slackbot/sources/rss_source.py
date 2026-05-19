@@ -584,7 +584,7 @@ def _get_with_retries(
     max_attempts: int,
     retry_backoff_seconds: float,
 ) -> requests.Response:
-    retry_statuses = {408, 429, 500, 502, 503, 504}
+    retry_statuses = {202, 408, 429, 500, 502, 503, 504}
     last_exception: requests.RequestException | None = None
     for attempt in range(1, max_attempts + 1):
         try:

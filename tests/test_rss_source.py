@@ -223,6 +223,51 @@ def test_wellcome_source_fetches_open_schemes(monkeypatch: pytest.MonkeyPatch) -
     )
 
 
+def test_wellcome_source_retries_accepted_placeholder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "props": {
+            "pageProps": {
+                "initialListings": [
+                    {
+                        "id": "5596",
+                        "url": "/research-funding/schemes/wellcome-career-development-awards/",
+                        "title": "Wellcome Career Development Awards",
+                        "listing_summary": "Funding for mid-career researchers.",
+                        "scheme_accepting_applications": "Open to applications",
+                    }
+                ]
+            }
+        }
+    }
+    html = (
+        "<html><body>"
+        '<script id="__NEXT_DATA__" type="application/json">'
+        f"{json.dumps(payload)}"
+        "</script>"
+        "</body></html>"
+    ).encode("utf-8")
+    responses = [_DummyResponse(b"", status_code=202), _DummyResponse(html)]
+
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    monkeypatch.setattr("requests.get", lambda *args, **kwargs: responses.pop(0))
+
+    source = WellcomeSchemesSource(
+        SourceSettings(
+            id="wellcome_schemes",
+            type="wellcome_schemes",
+            url="https://wellcome.org/research-funding/schemes",
+            options={"retry_attempts": 2, "retry_backoff_seconds": 0},
+        )
+    )
+
+    opportunities = source.fetch()
+
+    assert len(opportunities) == 1
+    assert opportunities[0].title == "Wellcome Career Development Awards"
+
+
 def test_innovation_source_dedupes_against_ukri_titles(monkeypatch: pytest.MonkeyPatch) -> None:
     competitions_html = b"""
     <html><body>
