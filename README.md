@@ -2,7 +2,7 @@
 
 Modular Python 3.12 service that polls funding opportunity sources, filters relevance, deduplicates, and posts new matches to Slack.
 
-Primary source implemented: UKRI Funding Finder RSS feed (`https://www.ukri.org/opportunity/feed/`).
+Primary sources implemented: UKRI Funding Finder RSS, Wellcome CMS scheme pages, Innovate UK funding search, and Leverhulme listings.
 
 ## Features
 
@@ -151,3 +151,5 @@ Add a new source by implementing `Source` and registering it in `sources/registr
 3. Add source entry in config with `type: your_type`.
 
 No changes to filter/store/notifier/service flow are required.
+
+Sources can be disabled without deleting their configuration by setting `enabled: false`.

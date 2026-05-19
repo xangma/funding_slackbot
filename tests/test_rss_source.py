@@ -14,6 +14,7 @@ from funding_slackbot.sources.rss_source import (
     LeverhulmeListingsSource,
     PortsmouthJobsSource,
     RssSource,
+    WellcomeCmsSchemesSource,
     WellcomeSchemesSource,
 )
 from funding_slackbot.utils.url_utils import canonicalize_url
@@ -289,6 +290,120 @@ def test_wellcome_source_skips_persistent_accepted_placeholder(
     )
 
     assert source.fetch() == []
+
+
+def test_wellcome_cms_source_fetches_open_schemes_from_sitemap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sitemap_index = b"""<?xml version="1.0" encoding="UTF-8"?>
+    <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <sitemap><loc>https://wellcome.org/sitemap.xml?page=1</loc></sitemap>
+    </sitemapindex>
+    """
+    sitemap_page = b"""<?xml version="1.0" encoding="UTF-8"?>
+    <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <url><loc>https://wellcome.org/research-funding/schemes/wellcome-career-development-awards</loc></url>
+      <url><loc>https://wellcome.org/research-funding/schemes/old-award-closed</loc></url>
+      <url><loc>https://wellcome.org/research-funding/schemes/not-accepting-yet</loc></url>
+      <url><loc>https://wellcome.org/research-funding/schemes/expired-but-open</loc></url>
+    </urlset>
+    """
+    open_scheme = b"""
+    <html><body>
+      <h1 class="page-title">Wellcome Career Development Awards </h1>
+      <script>window.drupalSettings = {"path":{"currentPath":"node\\/5596"}};</script>
+      <div class="field field--name-listing-summary field--type-text-long field--label-above">
+        <div class="field__label">Listing summary</div>
+        <div class="field__item"><p>Funding for mid-career researchers.</p></div>
+      </div>
+      <div class="field field--name-level-of-funding field--type-text-long field--label-above">
+        <div class="field__label">Funding amount</div>
+        <div class="field__item"><p>Usually below \xc2\xa3250,000 a year.</p></div>
+      </div>
+      <div class="field field--name-scheme-status field--type-list-string field--label-above">
+        <div class="field__label">Scheme status</div>
+        <div class="field__item">Open</div>
+      </div>
+      <div class="field field--name-scheme-closes-for-applications field--type-datetime field--label-above">
+        <div class="field__label">Scheme closes for applications</div>
+        <div class="field__item"><time datetime="2026-07-28T14:00:00Z">Tue, 28/07/2026 - 15:00</time></div>
+      </div>
+      <div class="field field--name-scheme-accepting-applications field--type-list-string field--label-above">
+        <div class="field__label">Is this scheme currently accepting applications?</div>
+        <div class="field__item">Open to applications</div>
+      </div>
+      <div class="field field--name-scheme-frequency-ref field--type-entity-reference field--label-above">
+        <div class="field__label">Scheme frequency</div>
+        <div class="field__item"><a href="/taxonomy/term/10619">Three times a year</a></div>
+      </div>
+    </body></html>
+    """
+    closed_scheme = b"""
+    <html><body>
+      <h1 class="page-title">Not Accepting Yet</h1>
+      <div class="field field--name-scheme-status field--type-list-string field--label-above">
+        <div class="field__label">Scheme status</div>
+        <div class="field__item">Closed</div>
+      </div>
+      <div class="field field--name-scheme-accepting-applications field--type-list-string field--label-above">
+        <div class="field__label">Is this scheme currently accepting applications?</div>
+        <div class="field__item">Closed to applications</div>
+      </div>
+    </body></html>
+    """
+    expired_scheme = b"""
+    <html><body>
+      <h1 class="page-title">Expired But Open</h1>
+      <div class="field field--name-scheme-status field--type-list-string field--label-above">
+        <div class="field__label">Scheme status</div>
+        <div class="field__item">Open</div>
+      </div>
+      <div class="field field--name-scheme-closes-for-applications field--type-datetime field--label-above">
+        <div class="field__label">Scheme closes for applications</div>
+        <div class="field__item"><time datetime="2020-01-01T00:00:00Z">Wed, 01/01/2020 - 00:00</time></div>
+      </div>
+      <div class="field field--name-scheme-accepting-applications field--type-list-string field--label-above">
+        <div class="field__label">Is this scheme currently accepting applications?</div>
+        <div class="field__item">Open to applications</div>
+      </div>
+    </body></html>
+    """
+    responses = {
+        "https://cms.wellcome.org/sitemap.xml": _DummyResponse(sitemap_index),
+        "https://cms.wellcome.org/sitemap.xml?page=1": _DummyResponse(sitemap_page),
+        "https://cms.wellcome.org/research-funding/schemes/wellcome-career-development-awards": _DummyResponse(open_scheme),
+        "https://cms.wellcome.org/research-funding/schemes/not-accepting-yet": _DummyResponse(closed_scheme),
+        "https://cms.wellcome.org/research-funding/schemes/expired-but-open": _DummyResponse(expired_scheme),
+    }
+    requested_urls: list[str] = []
+
+    def _fake_get(url: str, *args, **kwargs) -> _DummyResponse:
+        requested_urls.append(url)
+        return responses[url]
+
+    monkeypatch.setattr("requests.get", _fake_get)
+
+    source = WellcomeCmsSchemesSource(
+        SourceSettings(
+            id="wellcome_cms_schemes",
+            type="wellcome_cms_schemes",
+            url="https://cms.wellcome.org/sitemap.xml",
+        )
+    )
+
+    opportunities = source.fetch()
+
+    assert len(opportunities) == 1
+    opportunity = opportunities[0]
+    assert opportunity.source_id == "wellcome_cms_schemes"
+    assert opportunity.external_id == "5596"
+    assert opportunity.title == "Wellcome Career Development Awards"
+    assert opportunity.summary == "Funding for mid-career researchers."
+    assert opportunity.funding_type == "Three times a year"
+    assert opportunity.total_fund == "Usually below \u00a3250,000 a year."
+    assert opportunity.closing_date is not None
+    assert opportunity.closing_date.tzinfo == timezone.utc
+    assert "old-award-closed" not in "\n".join(requested_urls)
 
 
 def test_innovation_source_dedupes_against_ukri_titles(monkeypatch: pytest.MonkeyPatch) -> None:

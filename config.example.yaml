@@ -6,6 +6,16 @@ sources:
     timeout_seconds: 30
     retry_attempts: 3
     retry_backoff_seconds: 1
+  - id: wellcome_cms_schemes
+    type: wellcome_cms_schemes
+    url: https://cms.wellcome.org/sitemap.xml
+    enabled: true
+    cms_base_url: https://cms.wellcome.org
+    max_schemes: 60
+    max_workers: 6
+    timeout_seconds: 10
+    retry_attempts: 1
+    retry_backoff_seconds: 1
   - id: leverhulme_listings
     type: leverhulme_listings
     url: https://www.leverhulme.ac.uk/listings
