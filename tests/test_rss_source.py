@@ -268,6 +268,29 @@ def test_wellcome_source_retries_accepted_placeholder(
     assert opportunities[0].title == "Wellcome Career Development Awards"
 
 
+def test_wellcome_source_skips_persistent_accepted_placeholder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = [
+        _DummyResponse(b"", status_code=202),
+        _DummyResponse(b"", status_code=202),
+    ]
+
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    monkeypatch.setattr("requests.get", lambda *args, **kwargs: responses.pop(0))
+
+    source = WellcomeSchemesSource(
+        SourceSettings(
+            id="wellcome_schemes",
+            type="wellcome_schemes",
+            url="https://wellcome.org/research-funding/schemes",
+            options={"retry_attempts": 2, "retry_backoff_seconds": 0},
+        )
+    )
+
+    assert source.fetch() == []
+
+
 def test_innovation_source_dedupes_against_ukri_titles(monkeypatch: pytest.MonkeyPatch) -> None:
     competitions_html = b"""
     <html><body>

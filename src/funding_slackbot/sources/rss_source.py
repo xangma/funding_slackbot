@@ -187,6 +187,12 @@ class WellcomeSchemesSource(Source):
             retry_backoff_seconds=self.retry_backoff_seconds,
         )
         response.raise_for_status()
+        if response.status_code == 202 and not response.text.strip():
+            logger.warning(
+                "Wellcome source returned an empty 202 response after %d attempts; skipping",
+                self.retry_attempts,
+            )
+            return []
 
         listings = _extract_wellcome_listings(response.text)
         opportunities: list[Opportunity] = []
