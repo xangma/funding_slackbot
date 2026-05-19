@@ -2,12 +2,14 @@ sources:
   - id: ukri_rss
     type: rss
     url: https://www.ukri.org/opportunity/feed/
+    enabled: true
     timeout_seconds: 30
     retry_attempts: 3
     retry_backoff_seconds: 1
   - id: leverhulme_listings
     type: leverhulme_listings
     url: https://www.leverhulme.ac.uk/listings
+    enabled: true
     timeout_seconds: 30
     retry_attempts: 3
     retry_backoff_seconds: 1

@@ -64,3 +64,39 @@ def test_load_config_rejects_invalid_posting_limit(tmp_path) -> None:
 
     with pytest.raises(ConfigError, match="max_posts_per_run"):
         load_config(path)
+
+
+def test_load_config_skips_disabled_sources(tmp_path) -> None:
+    path = _write_config(
+        tmp_path,
+        """
+        sources:
+          - id: wellcome_schemes
+            type: wellcome_schemes
+            url: https://wellcome.org/research-funding/schemes
+            enabled: false
+          - id: ukri_rss
+            type: rss
+            url: https://www.ukri.org/opportunity/feed/
+        """,
+    )
+
+    config = load_config(path)
+
+    assert [source.id for source in config.sources] == ["ukri_rss"]
+
+
+def test_load_config_rejects_all_sources_disabled(tmp_path) -> None:
+    path = _write_config(
+        tmp_path,
+        """
+        sources:
+          - id: wellcome_schemes
+            type: wellcome_schemes
+            url: https://wellcome.org/research-funding/schemes
+            enabled: false
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="enabled source"):
+        load_config(path)

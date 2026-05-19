@@ -16,6 +16,7 @@ class SourceSettings:
     id: str
     type: str
     url: str
+    enabled: bool = True
     options: dict[str, Any] = field(default_factory=dict)
 
 
@@ -144,11 +145,17 @@ def load_config(path: str | Path) -> AppConfig:
         source_url = str(source.get("url", "")).strip()
         if not source_id or not source_type or not source_url:
             raise ConfigError(f"Source entry #{index} missing one of: id, type, url")
+        enabled = _as_bool(
+            source.get("enabled", True),
+            field_name=f"sources.{source_id}.enabled",
+        )
+        if not enabled:
+            continue
 
         options = {
             key: value
             for key, value in source.items()
-            if key not in {"id", "type", "url"}
+            if key not in {"id", "type", "url", "enabled"}
         }
 
         sources.append(
@@ -156,9 +163,12 @@ def load_config(path: str | Path) -> AppConfig:
                 id=source_id,
                 type=source_type,
                 url=source_url,
+                enabled=enabled,
                 options=options,
             )
         )
+    if not sources:
+        raise ConfigError("Config must define at least one enabled source")
 
     raw_filters = parsed.get("filters", {}) or {}
     if not isinstance(raw_filters, dict):
