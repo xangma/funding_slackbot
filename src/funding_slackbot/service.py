@@ -12,8 +12,6 @@ from funding_slackbot.sources import Source
 from funding_slackbot.store import Store
 
 logger = logging.getLogger(__name__)
-_PENDING_POST_MARKER = "__pending_post__"
-_POST_FAILED_MARKER = "__post_failed__"
 
 
 @dataclass(slots=True)
@@ -24,6 +22,7 @@ class RunStats:
     posted: int = 0
     skipped_already_posted: int = 0
     skipped_pending_confirmation: int = 0
+    skipped_post_in_progress: int = 0
     errors: list[str] = field(default_factory=list)
 
     @property
@@ -78,17 +77,21 @@ class FundingOpportunityService:
                 stats.processed += 1
 
                 try:
-                    seen = self.store.has_seen(opportunity.external_id)
+                    seen = self.store.has_seen(
+                        source_id=opportunity.source_id,
+                        external_id=opportunity.external_id,
+                    )
                 except Exception as exc:  # noqa: BLE001
                     message = f"failed to read dedupe state {opportunity.external_id}: {exc}"
                     logger.exception(message)
                     stats.errors.append(message)
                     continue
-                if seen and seen.posted_at:
+                if seen and (seen.posted_at or seen.post_status == "posted"):
                     stats.skipped_already_posted += 1
                     continue
-                if seen and _is_pending_post_reason(seen.match_reason):
+                if seen and seen.post_status == "posting":
                     stats.skipped_pending_confirmation += 1
+                    stats.skipped_post_in_progress += 1
                     continue
 
                 filter_result = self.filter_engine.evaluate(opportunity)
@@ -127,18 +130,22 @@ class FundingOpportunityService:
                     return stats
 
                 try:
-                    self.store.mark_seen(
+                    claimed = self.store.claim_for_post(
                         external_id=opportunity.external_id,
                         source_id=opportunity.source_id,
                         title=opportunity.title,
                         url=opportunity.url,
-                        match_reason=_PENDING_POST_MARKER,
-                        posted_at=None,
+                        match_reason=reason_text,
                     )
                 except Exception as exc:  # noqa: BLE001
-                    message = f"failed to record pending post {opportunity.external_id}: {exc}"
+                    message = f"failed to reserve post {opportunity.external_id}: {exc}"
                     logger.exception(message)
                     stats.errors.append(message)
+                    continue
+
+                if not claimed:
+                    stats.skipped_pending_confirmation += 1
+                    stats.skipped_post_in_progress += 1
                     continue
 
                 try:
@@ -148,29 +155,26 @@ class FundingOpportunityService:
                     logger.exception(message)
                     stats.errors.append(message)
                     try:
-                        self.store.mark_seen(
+                        self.store.mark_post_failed(
                             external_id=opportunity.external_id,
                             source_id=opportunity.source_id,
-                            title=opportunity.title,
-                            url=opportunity.url,
-                            match_reason=f"{_POST_FAILED_MARKER}: {reason_text}",
-                            posted_at=None,
+                            error=str(exc),
                         )
                     except Exception as mark_exc:  # noqa: BLE001
                         mark_message = (
-                            f"failed to clear pending post state "
+                            f"failed to record post failure "
                             f"{opportunity.external_id}: {mark_exc}"
                         )
                         logger.exception(mark_message)
                         stats.errors.append(mark_message)
                     continue
 
+                stats.posted += 1
+
                 try:
-                    self.store.mark_seen(
+                    self.store.mark_posted(
                         external_id=opportunity.external_id,
                         source_id=opportunity.source_id,
-                        title=opportunity.title,
-                        url=opportunity.url,
                         match_reason=reason_text,
                         posted_at=datetime.now(timezone.utc),
                     )
@@ -179,8 +183,6 @@ class FundingOpportunityService:
                     logger.exception(message)
                     stats.errors.append(message)
                     continue
-
-                stats.posted += 1
 
         return stats
 
@@ -195,7 +197,3 @@ def _default_preview(opportunity: Opportunity, reason: str) -> None:
     print(f"  Why it matched: {reason}")
     print(f"  Source: {opportunity.source_id}")
     print("")
-
-
-def _is_pending_post_reason(reason: str | None) -> bool:
-    return reason == _PENDING_POST_MARKER

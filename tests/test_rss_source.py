@@ -30,6 +30,7 @@ class _DummyResponse:
         self.text = content.decode("utf-8")
         self.url = url
         self.status_code = status_code
+        self.headers: dict[str, str] = {}
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
@@ -134,6 +135,40 @@ def test_rss_falls_back_to_url_hash_when_guid_missing(monkeypatch: pytest.Monkey
 
     assert first_run.external_id.startswith("urlhash:")
     assert first_run.external_id == second_run.external_id
+
+
+def test_rss_fetch_retries_transient_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    xml = b"""<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+    <rss version=\"2.0\">
+      <channel>
+        <title>Example</title>
+        <item>
+          <title>AI innovation</title>
+          <link>https://www.ukri.org/opportunity/retry-test/</link>
+        </item>
+      </channel>
+    </rss>
+    """
+    responses = [_DummyResponse(b"", status_code=503), _DummyResponse(xml)]
+
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    monkeypatch.setattr("requests.get", lambda *args, **kwargs: responses.pop(0))
+
+    source = RssSource(
+        SourceSettings(
+            id="ukri_rss",
+            type="rss",
+            url="https://www.ukri.org/opportunity/feed/",
+            options={"retry_attempts": 2, "retry_backoff_seconds": 0},
+        )
+    )
+
+    opportunities = source.fetch()
+
+    assert len(opportunities) == 1
+    assert opportunities[0].title == "AI innovation"
 
 
 def test_wellcome_source_fetches_open_schemes(monkeypatch: pytest.MonkeyPatch) -> None:

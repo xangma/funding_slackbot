@@ -13,7 +13,7 @@ from urllib.parse import urljoin
 import feedparser
 import requests
 
-from funding_slackbot.config import SourceSettings
+from funding_slackbot.config import ConfigError, SourceSettings
 from funding_slackbot.models import Opportunity
 from funding_slackbot.utils.datetime_utils import parse_datetime_utc
 from funding_slackbot.utils.url_utils import canonicalize_url, derive_external_id
@@ -79,12 +79,21 @@ class RssSource(Source):
     def __init__(self, settings: SourceSettings) -> None:
         super().__init__(source_id=settings.id)
         self.url = settings.url
-        timeout_raw = settings.options.get("timeout_seconds", 30)
-        self.timeout_seconds = int(timeout_raw) if timeout_raw is not None else 30
+        (
+            self.timeout_seconds,
+            self.retry_attempts,
+            self.retry_backoff_seconds,
+        ) = _http_options(settings)
 
     def fetch(self) -> list[Opportunity]:
         headers = {"User-Agent": "funding-slackbot/0.1 (+https://github.com/)"}
-        response = requests.get(self.url, timeout=self.timeout_seconds, headers=headers)
+        response = _get_with_retries(
+            self.url,
+            timeout_seconds=self.timeout_seconds,
+            headers=headers,
+            max_attempts=self.retry_attempts,
+            retry_backoff_seconds=self.retry_backoff_seconds,
+        )
         response.raise_for_status()
 
         parsed = feedparser.parse(response.content)
@@ -162,12 +171,21 @@ class WellcomeSchemesSource(Source):
     def __init__(self, settings: SourceSettings) -> None:
         super().__init__(source_id=settings.id)
         self.url = settings.url
-        timeout_raw = settings.options.get("timeout_seconds", 30)
-        self.timeout_seconds = int(timeout_raw) if timeout_raw is not None else 30
+        (
+            self.timeout_seconds,
+            self.retry_attempts,
+            self.retry_backoff_seconds,
+        ) = _http_options(settings)
 
     def fetch(self) -> list[Opportunity]:
         headers = {"User-Agent": "funding-slackbot/0.1 (+https://github.com/)"}
-        response = requests.get(self.url, timeout=self.timeout_seconds, headers=headers)
+        response = _get_with_retries(
+            self.url,
+            timeout_seconds=self.timeout_seconds,
+            headers=headers,
+            max_attempts=self.retry_attempts,
+            retry_backoff_seconds=self.retry_backoff_seconds,
+        )
         response.raise_for_status()
 
         listings = _extract_wellcome_listings(response.text)
@@ -224,8 +242,11 @@ class LeverhulmeListingsSource(Source):
     def __init__(self, settings: SourceSettings) -> None:
         super().__init__(source_id=settings.id)
         self.url = settings.url
-        timeout_raw = settings.options.get("timeout_seconds", 30)
-        self.timeout_seconds = int(timeout_raw) if timeout_raw is not None else 30
+        (
+            self.timeout_seconds,
+            self.retry_attempts,
+            self.retry_backoff_seconds,
+        ) = _http_options(settings)
 
     def fetch(self) -> list[Opportunity]:
         headers = {"User-Agent": "funding-slackbot/0.1 (+https://github.com/)"}
@@ -298,7 +319,13 @@ class LeverhulmeListingsSource(Source):
         headers: dict[str, str],
     ) -> requests.Response | None:
         try:
-            response = requests.get(url_value, timeout=self.timeout_seconds, headers=headers)
+            response = _get_with_retries(
+                url_value,
+                timeout_seconds=self.timeout_seconds,
+                headers=headers,
+                max_attempts=self.retry_attempts,
+                retry_backoff_seconds=self.retry_backoff_seconds,
+            )
             response.raise_for_status()
             return response
         except requests.HTTPError as exc:
@@ -317,14 +344,23 @@ class InnovationFundingSearchSource(Source):
     def __init__(self, settings: SourceSettings) -> None:
         super().__init__(source_id=settings.id)
         self.url = settings.url
-        timeout_raw = settings.options.get("timeout_seconds", 30)
-        self.timeout_seconds = int(timeout_raw) if timeout_raw is not None else 30
+        (
+            self.timeout_seconds,
+            self.retry_attempts,
+            self.retry_backoff_seconds,
+        ) = _http_options(settings)
         raw_ukri_url = str(settings.options.get("ukri_feed_url", _DEFAULT_UKRI_FEED_URL)).strip()
         self.ukri_feed_url = raw_ukri_url or _DEFAULT_UKRI_FEED_URL
 
     def fetch(self) -> list[Opportunity]:
         headers = {"User-Agent": "funding-slackbot/0.1 (+https://github.com/)"}
-        response = requests.get(self.url, timeout=self.timeout_seconds, headers=headers)
+        response = _get_with_retries(
+            self.url,
+            timeout_seconds=self.timeout_seconds,
+            headers=headers,
+            max_attempts=self.retry_attempts,
+            retry_backoff_seconds=self.retry_backoff_seconds,
+        )
         response.raise_for_status()
 
         cards = _extract_innovation_competition_cards(response.text)
@@ -375,8 +411,12 @@ class InnovationFundingSearchSource(Source):
     def _fetch_ukri_title_keys(self) -> list[str]:
         headers = {"User-Agent": "funding-slackbot/0.1 (+https://github.com/)"}
         try:
-            response = requests.get(
-                self.ukri_feed_url, timeout=self.timeout_seconds, headers=headers
+            response = _get_with_retries(
+                self.ukri_feed_url,
+                timeout_seconds=self.timeout_seconds,
+                headers=headers,
+                max_attempts=self.retry_attempts,
+                retry_backoff_seconds=self.retry_backoff_seconds,
             )
             response.raise_for_status()
         except Exception as exc:  # noqa: BLE001
@@ -396,8 +436,11 @@ class PortsmouthJobsSource(Source):
     def __init__(self, settings: SourceSettings) -> None:
         super().__init__(source_id=settings.id)
         self.url = settings.url
-        timeout_raw = settings.options.get("timeout_seconds", 30)
-        self.timeout_seconds = int(timeout_raw) if timeout_raw is not None else 30
+        (
+            self.timeout_seconds,
+            self.retry_attempts,
+            self.retry_backoff_seconds,
+        ) = _http_options(settings)
         self.lang = _normalize_whitespace(str(settings.options.get("lang", "USA"))) or "USA"
         per_page_raw = settings.options.get("results_per_page", 100)
         self.results_per_page = max(1, int(per_page_raw) if per_page_raw is not None else 100)
@@ -406,15 +449,33 @@ class PortsmouthJobsSource(Source):
 
     def fetch(self) -> list[Opportunity]:
         headers = {"User-Agent": "funding-slackbot/0.1 (+https://github.com/)"}
-        response = requests.get(self.url, timeout=self.timeout_seconds, headers=headers)
+        response = _get_with_retries(
+            self.url,
+            timeout_seconds=self.timeout_seconds,
+            headers=headers,
+            max_attempts=self.retry_attempts,
+            retry_backoff_seconds=self.retry_backoff_seconds,
+        )
         response.raise_for_status()
         search_url, page_text = response.url, response.text
         if _extract_portsmouth_tokens(page_text) == (None, None):
-            entry = requests.get(urljoin(search_url, "wrd/run/etrec002gf.open"), timeout=self.timeout_seconds, headers=headers)
+            entry = _get_with_retries(
+                urljoin(search_url, "wrd/run/etrec002gf.open"),
+                timeout_seconds=self.timeout_seconds,
+                headers=headers,
+                max_attempts=self.retry_attempts,
+                retry_backoff_seconds=self.retry_backoff_seconds,
+            )
             entry.raise_for_status()
             moved = re.search(r'href="([^"]*etrec179gf\.open\?[^"]+)"', entry.text, re.IGNORECASE)
             if moved is not None:
-                response = requests.get(urljoin(entry.url, moved.group(1)), timeout=self.timeout_seconds, headers=headers)
+                response = _get_with_retries(
+                    urljoin(entry.url, moved.group(1)),
+                    timeout_seconds=self.timeout_seconds,
+                    headers=headers,
+                    max_attempts=self.retry_attempts,
+                    retry_backoff_seconds=self.retry_backoff_seconds,
+                )
                 response.raise_for_status()
                 search_url, page_text = response.url, response.text
 
@@ -473,7 +534,13 @@ class PortsmouthJobsSource(Source):
         )
         request_headers = dict(headers)
         request_headers["mhrParams"] = params
-        response = requests.get(endpoint, timeout=self.timeout_seconds, headers=request_headers)
+        response = _get_with_retries(
+            endpoint,
+            timeout_seconds=self.timeout_seconds,
+            headers=request_headers,
+            max_attempts=self.retry_attempts,
+            retry_backoff_seconds=self.retry_backoff_seconds,
+        )
         response.raise_for_status()
         try:
             payload = json.loads(response.text)
@@ -490,6 +557,95 @@ class PortsmouthJobsSource(Source):
         if any(keyword in searchable for keyword in self.exclude_keywords):
             return False
         return any(keyword in searchable for keyword in self.include_keywords)
+
+
+def _http_options(settings: SourceSettings) -> tuple[int, int, float]:
+    return (
+        _positive_int_option(
+            settings.options.get("timeout_seconds", 30),
+            field_name=f"sources.{settings.id}.timeout_seconds",
+        ),
+        _positive_int_option(
+            settings.options.get("retry_attempts", 3),
+            field_name=f"sources.{settings.id}.retry_attempts",
+        ),
+        _non_negative_float_option(
+            settings.options.get("retry_backoff_seconds", 1.0),
+            field_name=f"sources.{settings.id}.retry_backoff_seconds",
+        ),
+    )
+
+
+def _get_with_retries(
+    url: str,
+    *,
+    timeout_seconds: int,
+    headers: dict[str, str],
+    max_attempts: int,
+    retry_backoff_seconds: float,
+) -> requests.Response:
+    retry_statuses = {408, 429, 500, 502, 503, 504}
+    last_exception: requests.RequestException | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = requests.get(url, timeout=timeout_seconds, headers=headers)
+        except requests.RequestException as exc:
+            last_exception = exc
+            if attempt == max_attempts:
+                raise
+            _sleep_before_retry(retry_backoff_seconds, attempt, None)
+            continue
+
+        status_code = getattr(response, "status_code", 200)
+        if status_code not in retry_statuses or attempt == max_attempts:
+            return response
+
+        _sleep_before_retry(retry_backoff_seconds, attempt, response)
+
+    if last_exception is not None:
+        raise last_exception
+    raise RuntimeError("unreachable retry state")
+
+
+def _sleep_before_retry(
+    retry_backoff_seconds: float,
+    attempt: int,
+    response: requests.Response | None,
+) -> None:
+    retry_after = response.headers.get("Retry-After") if response is not None else None
+    if retry_after:
+        try:
+            delay = max(0.0, float(retry_after))
+        except ValueError:
+            delay = retry_backoff_seconds * (2 ** (attempt - 1))
+    else:
+        delay = retry_backoff_seconds * (2 ** (attempt - 1))
+    if delay > 0:
+        time.sleep(delay)
+
+
+def _positive_int_option(value: Any, *, field_name: str) -> int:
+    if isinstance(value, bool):
+        raise ConfigError(f"{field_name} must be an integer")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{field_name} must be an integer") from exc
+    if parsed < 1:
+        raise ConfigError(f"{field_name} must be >= 1")
+    return parsed
+
+
+def _non_negative_float_option(value: Any, *, field_name: str) -> float:
+    if isinstance(value, bool):
+        raise ConfigError(f"{field_name} must be a number")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{field_name} must be a number") from exc
+    if parsed < 0:
+        raise ConfigError(f"{field_name} must be >= 0")
+    return parsed
 
 
 def _extract_tags(entry: Any) -> list[str]:

@@ -2,9 +2,15 @@ sources:
   - id: ukri_rss
     type: rss
     url: https://www.ukri.org/opportunity/feed/
+    timeout_seconds: 30
+    retry_attempts: 3
+    retry_backoff_seconds: 1
   - id: leverhulme_listings
     type: leverhulme_listings
     url: https://www.leverhulme.ac.uk/listings
+    timeout_seconds: 30
+    retry_attempts: 3
+    retry_backoff_seconds: 1
 
 filters:
   include_keywords:
@@ -23,6 +29,9 @@ filters:
 
 slack:
   webhook_env_var: SLACK_WEBHOOK_URL
+  timeout_seconds: 15
+  retry_attempts: 3
+  retry_backoff_seconds: 1
 
 posting:
   max_posts_per_run: 10

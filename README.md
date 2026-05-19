@@ -12,6 +12,7 @@ Primary source implemented: UKRI Funding Finder RSS feed (`https://www.ukri.org/
 - Rule-based filter engine with match reasons
 - SQLite dedupe store (idempotent posting)
 - Slack Incoming Webhook notifier
+- Retry handling for transient RSS/Slack failures
 - Dry-run mode that prints would-post messages
 - Backfill command to mark current opportunities as seen
 - Unit tests with `pytest`
@@ -91,21 +92,31 @@ When a record matches, Slack includes `Why it matched: ...` with keyword or rule
 
 ## Idempotency and dedupe
 
-Dedupe key: `external_id`.
+Dedupe key: `(source_id, external_id)`.
 
 - Uses feed `id`/`guid` when available.
 - Falls back to hash of canonicalized URL (tracking params stripped, fragment removed, trailing slash normalized).
 - Already posted records (`posted_at` set) are skipped.
+- Records are marked `posting` before Slack is called. This prevents a repost if Slack succeeds but the final SQLite update fails.
+
+Existing SQLite databases from the original single-column `external_id` schema are migrated automatically by `init-db` or `run`. The migration preserves existing `posted_at` values and marks those rows as `posted`.
 
 SQLite schema (`opportunities`):
 
-- `external_id TEXT PRIMARY KEY`
 - `source_id TEXT`
+- `external_id TEXT`
 - `first_seen_at DATETIME`
 - `posted_at DATETIME NULL`
 - `title TEXT`
 - `url TEXT`
 - `match_reason TEXT`
+- `post_status TEXT`
+- `last_post_attempt_at DATETIME NULL`
+- `post_error TEXT NULL`
+
+Primary key: `(source_id, external_id)`.
+
+Before deploying a schema-changing release on `roni1`, back up the current database, then run `funding-bot --config config.yaml init-db` once on the host to apply the migration before the scheduled job resumes.
 
 ## Scheduling
 

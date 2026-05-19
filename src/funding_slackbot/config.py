@@ -31,6 +31,9 @@ class FilterSettings:
 @dataclass(slots=True)
 class SlackSettings:
     webhook_env_var: str = "SLACK_WEBHOOK_URL"
+    timeout_seconds: int = 15
+    retry_attempts: int = 3
+    retry_backoff_seconds: float = 1.0
 
 
 @dataclass(slots=True)
@@ -95,6 +98,20 @@ def _as_int(value: Any, *, field_name: str, minimum: int | None = None) -> int:
     return parsed
 
 
+def _as_float(value: Any, *, field_name: str, minimum: float | None = None) -> float:
+    if isinstance(value, bool):
+        raise ConfigError(f"{field_name} must be a number")
+
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{field_name} must be a number") from exc
+
+    if minimum is not None and parsed < minimum:
+        raise ConfigError(f"{field_name} must be >= {minimum:g}")
+    return parsed
+
+
 def _resolve_relative_path(config_path: Path, raw_path: str) -> str:
     candidate = Path(raw_path).expanduser()
     if candidate.is_absolute():
@@ -123,7 +140,7 @@ def load_config(path: str | Path) -> AppConfig:
             raise ConfigError(f"Source entry #{index} must be a mapping")
 
         source_id = str(source.get("id", "")).strip()
-        source_type = str(source.get("type", "")).strip()
+        source_type = str(source.get("type", "")).strip().lower()
         source_url = str(source.get("url", "")).strip()
         if not source_id or not source_type or not source_url:
             raise ConfigError(f"Source entry #{index} missing one of: id, type, url")
@@ -170,9 +187,32 @@ def load_config(path: str | Path) -> AppConfig:
     if not isinstance(raw_slack, dict):
         raise ConfigError("slack must be a mapping")
 
-    slack_settings = SlackSettings(
-        webhook_env_var=str(raw_slack.get("webhook_env_var", "SLACK_WEBHOOK_URL")).strip()
+    webhook_env_var = (
+        str(raw_slack.get("webhook_env_var", "SLACK_WEBHOOK_URL")).strip()
         or "SLACK_WEBHOOK_URL"
+    )
+    if webhook_env_var.startswith(("http://", "https://")):
+        raise ConfigError(
+            "slack.webhook_env_var must be an environment variable name, not a webhook URL"
+        )
+
+    slack_settings = SlackSettings(
+        webhook_env_var=webhook_env_var,
+        timeout_seconds=_as_int(
+            raw_slack.get("timeout_seconds", 15),
+            field_name="slack.timeout_seconds",
+            minimum=1,
+        ),
+        retry_attempts=_as_int(
+            raw_slack.get("retry_attempts", 3),
+            field_name="slack.retry_attempts",
+            minimum=1,
+        ),
+        retry_backoff_seconds=_as_float(
+            raw_slack.get("retry_backoff_seconds", 1.0),
+            field_name="slack.retry_backoff_seconds",
+            minimum=0,
+        ),
     )
 
     raw_posting = parsed.get("posting", {}) or {}
@@ -200,10 +240,21 @@ def load_config(path: str | Path) -> AppConfig:
         raise ConfigError("storage must be a mapping")
 
     storage_path = str(raw_storage.get("path", "data/state.sqlite")).strip() or "data/state.sqlite"
+    storage_type = str(raw_storage.get("type", "sqlite")).strip().lower() or "sqlite"
+    if storage_type != "sqlite":
+        raise ConfigError(f"Unsupported storage type: {storage_type}")
+
     storage_settings = StorageSettings(
-        type=str(raw_storage.get("type", "sqlite")).strip() or "sqlite",
+        type=storage_type,
         path=_resolve_relative_path(config_path, storage_path),
     )
+
+    log_level = str(parsed.get("log_level", "INFO")).strip().upper() or "INFO"
+    valid_log_levels = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"}
+    if log_level not in valid_log_levels:
+        raise ConfigError(
+            f"log_level must be one of: {', '.join(sorted(valid_log_levels))}"
+        )
 
     return AppConfig(
         sources=sources,
@@ -211,5 +262,5 @@ def load_config(path: str | Path) -> AppConfig:
         slack=slack_settings,
         posting=posting_settings,
         storage=storage_settings,
-        log_level=str(parsed.get("log_level", "INFO")).upper(),
+        log_level=log_level,
     )

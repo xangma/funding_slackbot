@@ -100,7 +100,12 @@ def main(argv: list[str] | None = None) -> int:
                 app_config.slack.webhook_env_var,
             )
             return 2
-        notifier = SlackWebhookNotifier(webhook_url=webhook_url)
+        notifier = SlackWebhookNotifier(
+            webhook_url=webhook_url,
+            timeout_seconds=app_config.slack.timeout_seconds,
+            max_attempts=app_config.slack.retry_attempts,
+            retry_backoff_seconds=app_config.slack.retry_backoff_seconds,
+        )
 
     service = FundingOpportunityService(
         sources=sources,
@@ -115,13 +120,14 @@ def main(argv: list[str] | None = None) -> int:
 
     stats = service.run_once()
     logger.info(
-        "Run complete | processed=%d matched=%d posted=%d filtered_out=%d skipped_already_posted=%d skipped_pending_confirmation=%d errors=%d",
+        "Run complete | processed=%d matched=%d posted=%d filtered_out=%d skipped_already_posted=%d skipped_pending_confirmation=%d skipped_post_in_progress=%d errors=%d",
         stats.processed,
         stats.matched,
         stats.posted,
         stats.filtered_out,
         stats.skipped_already_posted,
         stats.skipped_pending_confirmation,
+        stats.skipped_post_in_progress,
         len(stats.errors),
     )
 
@@ -158,8 +164,20 @@ def _run_backfill(*, store: SQLiteStore, sources: list[Source]) -> int:
             continue
 
         for opportunity in opportunities:
-            seen = store.has_seen(opportunity.external_id)
-            if seen is not None:
+            try:
+                seen = store.has_seen(
+                    source_id=opportunity.source_id,
+                    external_id=opportunity.external_id,
+                )
+                if seen is not None:
+                    continue
+            except Exception as exc:  # noqa: BLE001
+                errors += 1
+                logger.exception(
+                    "failed to check seen during backfill for %s: %s",
+                    opportunity.external_id,
+                    exc,
+                )
                 continue
 
             try:
