@@ -21,6 +21,22 @@ filters:
     - foundation model*
     - language model*
     - LLM*
+    - edge AI
+    - edge artificial intelligence
+    - edge ML
+    - edge machine learning
+    - AI at the edge
+    - machine learning at the edge
+    - TinyML
+    - tiny machine learning
+    - on-device AI
+    - on-device machine learning
+    - embedded AI
+    - embedded ML
+    - embedded machine learning
+    - embodied AI
+    - embodied intelligence
+    - federated learning
     - NLP
     - natural language processing
     - machine learning
@@ -52,6 +68,22 @@ filters:
     - exascale
     - GPU*
     - distributed computing
+    - edge computing
+    - IoT
+    - internet of things
+    - embedded system*
+    - microcontroller*
+    - MCU*
+    - robot*
+    - autonomous system*
+    - autonomous vehicle*
+    - autonomous platform*
+    - UAV*
+    - drone*
+    - uncrewed aerial vehicle*
+    - unmanned aerial vehicle*
+    - UGV*
+    - rover*
     - cloud computing
     - cloud infrastructure
     - kubernetes
@@ -62,6 +94,35 @@ filters:
     - computer vision
     - image analysis
     - signal processing
+    - real-time inference
+    - model compression
+    - quantization
+    - quantisation
+    - low-power AI
+    - low power AI
+    - low-power machine learning
+    - low power machine learning
+    - neuromorphic
+    - robot learning
+    - human-robot interaction
+    - HRI
+    - swarm robotics
+    - soft robotics
+    - field robotics
+    - medical robotics
+    - surgical robotics
+    - assistive robotics
+    - rehabilitation robotics
+    - mobile manipulat*
+    - robotic manipulat*
+    - robot perception
+    - robot navigation
+    - autonomous navigation
+    - motion planning
+    - path planning
+    - sensor fusion
+    - SLAM
+    - mechatronic*
     - simulat*
     - digital twin*
     - surrogate model*
