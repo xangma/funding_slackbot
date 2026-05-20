@@ -93,6 +93,15 @@ def _build_keyword_pattern(keyword: str) -> re.Pattern[str] | None:
     if not normalized:
         return None
 
-    parts = [re.escape(part) for part in normalized.split(" ")]
+    parts = [_build_keyword_part_pattern(part) for part in normalized.split(" ")]
     phrase = r"\s+".join(parts)
     return re.compile(rf"(?<![A-Za-z0-9]){phrase}(?![A-Za-z0-9])", re.IGNORECASE)
+
+
+def _build_keyword_part_pattern(part: str) -> str:
+    if "*" not in part:
+        return re.escape(part)
+
+    wildcard = r"[A-Za-z0-9_-]*"
+    segments = [re.escape(segment) for segment in part.split("*")]
+    return wildcard.join(segments)

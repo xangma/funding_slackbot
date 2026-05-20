@@ -90,6 +90,12 @@ Rules are applied in this order:
 
 When a record matches, Slack includes `Why it matched: ...` with keyword or rule hits.
 
+Plain keywords match whole words or phrases. Add `*` inside a keyword to match a
+word family intentionally, for example `genom*` matches `genome`, `genomic`, and
+`genomics`, while `"*omics"` matches terms such as `transcriptomics` and
+`proteomics`. Quote YAML entries that start with `*`; leading wildcards are broad
+and match any whole word with that ending.
+
 ## Idempotency and dedupe
 
 Dedupe key: `(source_id, external_id)`.

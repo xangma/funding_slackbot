@@ -89,3 +89,39 @@ def test_filter_keyword_match_uses_word_boundaries() -> None:
     )
 
     assert result.matched is False
+
+
+def test_filter_keyword_globs_match_configured_word_families() -> None:
+    filt = RuleBasedFilter(
+        FilterSettings(
+            include_keywords=["genom*", "*omics"],
+        )
+    )
+
+    result = filt.evaluate(
+        _opportunity(
+            title="Genomics and transcriptomics platform",
+            summary="Shared sequencing infrastructure",
+        )
+    )
+
+    assert result.matched is True
+    assert "genom*" in result.reason_text()
+    assert "*omics" in result.reason_text()
+
+
+def test_filter_keyword_globs_keep_outer_word_boundaries() -> None:
+    filt = RuleBasedFilter(
+        FilterSettings(
+            include_keywords=["genom*"],
+        )
+    )
+
+    result = filt.evaluate(
+        _opportunity(
+            title="Pangenomic research infrastructure",
+            summary="Shared sequencing infrastructure",
+        )
+    )
+
+    assert result.matched is False

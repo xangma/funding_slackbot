@@ -31,6 +31,9 @@ filters:
     - health
     - NHS
     - digital twin
+    - bioinformatics
+    - genom*
+    - "*omics"
   exclude_keywords:
     - studentship
     - PhD

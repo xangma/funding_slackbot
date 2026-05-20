@@ -17,71 +17,168 @@ filters:
     # Core AI/ML + research software
     - AI
     - artificial intelligence
+    - generative AI
+    - foundation model*
+    - language model*
+    - LLM*
+    - NLP
+    - natural language processing
     - machine learning
     - deep learning
     - data science
+    - data engineering
+    - data infrastructure
     - research software
+    - research software engineer*
+    - RSE
     - scientific software
     - software engineering
+    - software sustainab*
+    - software maintenance
     - scientific computing
+    - open source
+    - reproducib*
+    - FAIR data
+    - FAIR principles
+    - workflow*
+    - pipeline*
     - analytics
+    - visuali*
 
     # Compute infrastructure
     - HPC
     - high performance computing
-    - GPU
+    - supercomput*
+    - exascale
+    - GPU*
     - distributed computing
+    - cloud computing
+    - cloud infrastructure
     - kubernetes
-    - container
+    - container*
     - MLOps
 
     # Methods
     - computer vision
     - image analysis
     - signal processing
-    - simulation
-    - surrogate model
-    - emulator
+    - simulat*
+    - digital twin*
+    - surrogate model*
+    - emulat*
+
+    # ILSH / bioinformatics / genomics
+    - bioinformatics
+    - computational biology
+    - genom*
+    - sequenc*
+    - next-generation sequencing
+    - NGS
+    - RNA-seq
+    - "*omics"
+    - multi-omics
+    - single-cell
+    - single cell
+    - metagenom*
+    - microbiom*
+    - nanopor*
+    - biomed*
+    - biotech*
+    - engineering biology
+    - synthetic biology
+    - molecular diagnostics
+    - diagnostic*
+    - biomarker*
+    - precision medicine
+    - genomic medicine
+    - genetic medicine
+    - translational medicine
+    - therapeutic*
+    - drug discovery
+    - pathogen genom*
+    - infectious disease*
+    - health data science
+    - health informatics
+    - clinical informatics
+    - clinical data
+    - medical imaging
+    - medtech*
+    - healthcare
+    - public health
+    - epidemiolog*
+    - clinical trial*
+    - electronic health record*
+    - EHR
+    - real-world data
+    - immunolog*
+    - vaccine*
+    - gene therap*
+    - cell therap*
+    - CRISPR
+    - antimicrobial resistance
+    - AMR
 
     # Team domain context
-    - astrophysics
-    - cosmology
-    - gravitational wave
+    - astronom*
+    - astrophysic*
+    - cosmolog*
+    - gravitational wave*
+    - gravitational-wave*
     - LIGO
     - Virgo
     - KAGRA
     - Euclid
     - LSST
+    - Rubin
+    - Vera Rubin
+    - SKA
     - radio astronomy
-    - fast radio burst
-    - FRB
+    - fast radio burst*
+    - FRB*
     - dark energy
+    - dark matter
+    - black hole*
+    - neutron star*
     - modified gravity
-    - galaxy survey
+    - weak lens*
+    - galaxy survey*
     - 21cm
-    - satellite
+    - CMB
+    - transient*
+    - time-domain
+    - satellite*
     - remote sensing
+    - earth observation
     - geospatial
+    - space science
+    - space weather
+    - climate
+    - hazard*
+    - resilience
     - citizen science
     - disaster relief
+    - humanitarian
     - road detection
+    - transport network*
 
     # Others
     - health
     - NHS
   exclude_keywords:
-    - studentship
-    - PhD
-    - doctoral
+    - studentship*
+    - PhD*
+    - doctoral*
     - doctoral training
-    - internship
-    - traineeship
-    - placement
-    - undergraduate
+    - internship*
+    - traineeship*
+    - placement*
+    - undergraduate*
     - masters
-    - MSc
-    - summer school
-    - bursary
+    - master's
+    - MSc*
+    - MRes
+    - summer school*
+    - bursar*
   include_councils: []
   include_funding_types: []
   min_days_until_deadline: 
