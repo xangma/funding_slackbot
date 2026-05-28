@@ -54,6 +54,9 @@ class LLMSettings:
     timeout_seconds: int = 60
     max_tokens: int = 1200
     temperature: float = 0.1
+    retry_attempts: int = 2
+    retry_backoff_seconds: float = 1.0
+    prompt_summary_chars: int = 600
     group_opportunities: bool = False
 
 
@@ -326,6 +329,21 @@ def load_config(path: str | Path) -> AppConfig:
         temperature=_as_float(
             raw_llm.get("temperature", 0.1),
             field_name="llm.temperature",
+            minimum=0,
+        ),
+        retry_attempts=_as_int(
+            raw_llm.get("retry_attempts", 2),
+            field_name="llm.retry_attempts",
+            minimum=1,
+        ),
+        retry_backoff_seconds=_as_float(
+            raw_llm.get("retry_backoff_seconds", 1.0),
+            field_name="llm.retry_backoff_seconds",
+            minimum=0,
+        ),
+        prompt_summary_chars=_as_int(
+            raw_llm.get("prompt_summary_chars", 600),
+            field_name="llm.prompt_summary_chars",
             minimum=0,
         ),
         group_opportunities=_as_bool(

@@ -121,7 +121,14 @@ llm:
   enabled: true
   base_url: http://148.197.150.206:8001/v1
   model: qwen3.6
+  retry_attempts: 2
+  retry_backoff_seconds: 1.0
+  prompt_summary_chars: 600
   group_opportunities: true
 ```
+
+Keep the endpoint private to loopback, a tunnel, or a tightly scoped private
+network ACL. If `api_key_env_var` is configured, do not send it to a non-local
+plain HTTP endpoint.
 
 Run `funding-bot --config config.yaml dry-run` first. That path can exercise the LLM and render the exact Slack digest text without posting to Slack.

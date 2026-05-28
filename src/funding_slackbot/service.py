@@ -576,8 +576,8 @@ class FundingOpportunityService:
         stats: RunStats,
     ) -> OpportunityDigest:
         try:
-            if self.llm_client is None or not self.llm_client.is_model_available():
-                raise LLMError("configured local LLM model is not available")
+            if self.llm_client is None:
+                raise LLMError("configured local LLM client is not available")
             digest = self.llm_client.group_opportunities(matches)
             stats.llm_grouping_used = True
             return digest

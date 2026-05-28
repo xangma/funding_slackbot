@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import logging
 import os
 import sys
+from urllib.parse import urlparse
 
 from funding_slackbot.config import AppConfig, ConfigError, load_config
 from funding_slackbot.filters import RuleBasedFilter
@@ -180,6 +182,16 @@ def _build_llm_client(app_config: AppConfig) -> LocalLLMClient | None:
     api_key = None
     if app_config.llm.api_key_env_var:
         api_key = os.getenv(app_config.llm.api_key_env_var, "").strip() or None
+        if api_key is None:
+            logger.warning(
+                "LLM API key environment variable %s is configured but not set",
+                app_config.llm.api_key_env_var,
+            )
+        elif _uses_plain_http_remote(app_config.llm.base_url):
+            logger.warning(
+                "LLM API key will be sent over plain HTTP to %s",
+                app_config.llm.base_url,
+            )
 
     return LocalLLMClient(
         base_url=app_config.llm.base_url,
@@ -188,7 +200,23 @@ def _build_llm_client(app_config: AppConfig) -> LocalLLMClient | None:
         max_tokens=app_config.llm.max_tokens,
         temperature=app_config.llm.temperature,
         api_key=api_key,
+        retry_attempts=app_config.llm.retry_attempts,
+        retry_backoff_seconds=app_config.llm.retry_backoff_seconds,
+        prompt_summary_chars=app_config.llm.prompt_summary_chars,
     )
+
+
+def _uses_plain_http_remote(base_url: str) -> bool:
+    parsed = urlparse(base_url)
+    if parsed.scheme != "http":
+        return False
+    hostname = parsed.hostname
+    if hostname is None or hostname == "localhost":
+        return False
+    try:
+        return not ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return True
 
 
 def _build_sources(app_config: AppConfig) -> list[Source]:

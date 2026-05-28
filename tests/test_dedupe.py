@@ -78,6 +78,11 @@ class FakeLLMClient:
         )
 
 
+class NoPreflightLLMClient(FakeLLMClient):
+    def is_model_available(self) -> bool:
+        raise AssertionError("service should call group_opportunities directly")
+
+
 class FailingMarkPostedStore(SQLiteStore):
     def __init__(self, db_path: str) -> None:
         super().__init__(db_path)
@@ -191,7 +196,7 @@ def test_llm_grouping_posts_one_digest_and_marks_items_posted(tmp_path) -> None:
         max_posts_per_run=10,
         record_non_matches_as_seen=True,
         dry_run=False,
-        llm_client=FakeLLMClient(),  # type: ignore[arg-type]
+        llm_client=NoPreflightLLMClient(),  # type: ignore[arg-type]
         group_opportunities_with_llm=True,
     )
 

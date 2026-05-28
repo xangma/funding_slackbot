@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 import requests
@@ -14,6 +15,8 @@ from funding_slackbot.models import (
 from funding_slackbot.utils.datetime_utils import format_datetime, to_utc
 
 logger = logging.getLogger(__name__)
+
+_RETRY_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 
 
 class LLMError(RuntimeError):
@@ -30,6 +33,9 @@ class LocalLLMClient:
         max_tokens: int,
         temperature: float,
         api_key: str | None = None,
+        retry_attempts: int = 2,
+        retry_backoff_seconds: float = 1.0,
+        prompt_summary_chars: int = 600,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -37,6 +43,9 @@ class LocalLLMClient:
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.api_key = api_key
+        self.retry_attempts = max(1, retry_attempts)
+        self.retry_backoff_seconds = max(0.0, retry_backoff_seconds)
+        self.prompt_summary_chars = max(0, prompt_summary_chars)
 
     def is_model_available(self) -> bool:
         try:
@@ -79,7 +88,11 @@ class LocalLLMClient:
                     "content": json.dumps(
                         {
                             "opportunities": [
-                                _match_to_prompt_item(match) for match in matches
+                                _match_to_prompt_item(
+                                    match,
+                                    summary_max_chars=self.prompt_summary_chars,
+                                )
+                                for match in matches
                             ]
                         },
                         ensure_ascii=True,
@@ -92,14 +105,7 @@ class LocalLLMClient:
         }
 
         try:
-            response = requests.post(
-                f"{self.base_url}/chat/completions",
-                headers=self._headers(),
-                json=payload,
-                timeout=self.timeout_seconds,
-            )
-            response.raise_for_status()
-            data = response.json()
+            data = self._chat_completion(payload)
             content = data["choices"][0]["message"]["content"]
         except (
             KeyError,
@@ -117,6 +123,76 @@ class LocalLLMClient:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
+
+    def _chat_completion(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._chat_completion_with_retries(
+            payload,
+            allow_response_format_fallback=True,
+        )
+
+    def _chat_completion_with_retries(
+        self,
+        payload: dict[str, Any],
+        *,
+        allow_response_format_fallback: bool,
+    ) -> dict[str, Any]:
+        last_exception: requests.RequestException | None = None
+        for attempt in range(1, self.retry_attempts + 1):
+            try:
+                response = requests.post(
+                    f"{self.base_url}/chat/completions",
+                    headers=self._headers(),
+                    json=payload,
+                    timeout=self.timeout_seconds,
+                )
+            except (requests.ConnectionError, requests.Timeout) as exc:
+                last_exception = exc
+                if attempt == self.retry_attempts:
+                    raise
+                logger.warning(
+                    "Local LLM request failed on attempt %d/%d: %s",
+                    attempt,
+                    self.retry_attempts,
+                    exc,
+                )
+                _sleep_before_retry(self.retry_backoff_seconds, attempt, None)
+                continue
+
+            if (
+                response.status_code == 400
+                and allow_response_format_fallback
+                and "response_format" in payload
+                and "response_format" in response.text.lower()
+            ):
+                fallback_payload = dict(payload)
+                fallback_payload.pop("response_format", None)
+                logger.warning(
+                    "Local LLM rejected response_format; retrying without it"
+                )
+                return self._chat_completion_with_retries(
+                    fallback_payload,
+                    allow_response_format_fallback=False,
+                )
+
+            if (
+                response.status_code in _RETRY_STATUS_CODES
+                and attempt < self.retry_attempts
+            ):
+                logger.warning(
+                    "Local LLM returned HTTP %d on attempt %d/%d; retrying",
+                    response.status_code,
+                    attempt,
+                    self.retry_attempts,
+                )
+                _sleep_before_retry(self.retry_backoff_seconds, attempt, response)
+                continue
+
+            response.raise_for_status()
+            return response.json()
+
+        if last_exception is not None:
+            raise last_exception
+        raise LLMError("local LLM retry loop ended without a response")
 
 
 def build_simple_digest(
@@ -164,15 +240,20 @@ Return JSON only with this exact shape:
   ]
 }
 Use every input id exactly once. Do not invent ids. Keep headings under 8 words.
+Omit groups that would contain no ids.
 Do not rewrite deadlines, URLs, funders, or money values; those are rendered by the application."""
 
 
-def _match_to_prompt_item(match: OpportunityMatch) -> dict[str, str | None]:
+def _match_to_prompt_item(
+    match: OpportunityMatch,
+    *,
+    summary_max_chars: int,
+) -> dict[str, str | None]:
     opportunity = match.opportunity
     return {
         "id": _match_id(match),
         "title": opportunity.title,
-        "summary": opportunity.summary[:1000],
+        "summary": opportunity.summary[:summary_max_chars],
         "funder": opportunity.funder,
         "funding_type": opportunity.funding_type,
         "total_fund": opportunity.total_fund,
@@ -193,43 +274,59 @@ def _digest_from_llm_content(
     if not isinstance(parsed, dict):
         raise LLMError("local LLM JSON root was not an object")
 
+    raw_groups = parsed.get("groups")
+    if not isinstance(raw_groups, list):
+        raise LLMError("local LLM JSON field 'groups' was not a list")
+
     by_id = {_match_id(match): match for match in matches}
     used: set[str] = set()
+    unknown_ids: list[str] = []
+    duplicate_ids: list[str] = []
     groups: list[OpportunityGroup] = []
-    for raw_group in parsed.get("groups", []):
+    for index, raw_group in enumerate(raw_groups, start=1):
         if not isinstance(raw_group, dict):
-            continue
+            raise LLMError(f"local LLM group #{index} was not an object")
         item_ids = raw_group.get("item_ids", [])
-        if not isinstance(item_ids, list):
-            continue
-        items = [
-            by_id[item_id]
-            for item_id in item_ids
-            if isinstance(item_id, str) and item_id in by_id and item_id not in used
-        ]
+        if not isinstance(item_ids, list) or not all(
+            isinstance(item_id, str) for item_id in item_ids
+        ):
+            raise LLMError(
+                f"local LLM group #{index} field 'item_ids' was not a string list"
+            )
+
+        items: list[OpportunityMatch] = []
+        for item_id in item_ids:
+            if item_id not in by_id:
+                unknown_ids.append(item_id)
+                continue
+            if item_id in used:
+                duplicate_ids.append(item_id)
+                continue
+            used.add(item_id)
+            items.append(by_id[item_id])
+
         if not items:
-            continue
-        used.update(_match_id(item) for item in items)
+            raise LLMError(f"local LLM group #{index} did not include usable ids")
         groups.append(
             OpportunityGroup(
-                heading=_clean_text(raw_group.get("heading"), "Other opportunities", 80),
+                heading=_clean_text(
+                    raw_group.get("heading"),
+                    "Other opportunities",
+                    80,
+                ),
                 summary=_clean_text(raw_group.get("summary"), "", 240),
                 items=items,
             )
         )
 
-    missing = [match for match in matches if _match_id(match) not in used]
-    if missing:
-        groups.append(
-            OpportunityGroup(
-                heading="Other opportunities",
-                summary="Additional matched opportunities.",
-                items=missing,
-            )
+    missing_ids = [
+        _match_id(match) for match in matches if _match_id(match) not in used
+    ]
+    if unknown_ids or duplicate_ids or missing_ids:
+        raise LLMError(
+            "local LLM returned inconsistent grouping ids: "
+            f"{_id_error_summary(unknown_ids, duplicate_ids, missing_ids)}"
         )
-
-    if not groups and matches:
-        raise LLMError("local LLM did not assign any known opportunity ids")
 
     return OpportunityDigest(
         title=_clean_text(parsed.get("title"), "New funding opportunities", 80),
@@ -254,6 +351,28 @@ def _extract_json_object(content: str) -> str:
     return stripped[start : end + 1]
 
 
+def _id_error_summary(
+    unknown_ids: list[str],
+    duplicate_ids: list[str],
+    missing_ids: list[str],
+) -> str:
+    parts = [
+        _format_id_error("unknown", unknown_ids),
+        _format_id_error("duplicate", duplicate_ids),
+        _format_id_error("missing", missing_ids),
+    ]
+    return "; ".join(part for part in parts if part)
+
+
+def _format_id_error(label: str, ids: list[str]) -> str | None:
+    if not ids:
+        return None
+    preview = ", ".join(ids[:3])
+    if len(ids) > 3:
+        preview = f"{preview}, +{len(ids) - 3} more"
+    return f"{len(ids)} {label}: {preview}"
+
+
 def _match_id(match: OpportunityMatch) -> str:
     return f"{match.opportunity.source_id}:{match.opportunity.external_id}"
 
@@ -270,6 +389,23 @@ def _format_for_prompt(value: Any) -> str | None:
     ):
         return value_utc.strftime("%Y-%m-%d")
     return format_datetime(value_utc)
+
+
+def _sleep_before_retry(
+    retry_backoff_seconds: float,
+    attempt: int,
+    response: requests.Response | None,
+) -> None:
+    retry_after = response.headers.get("Retry-After") if response is not None else None
+    if retry_after:
+        try:
+            delay = max(0.0, float(retry_after))
+        except ValueError:
+            delay = retry_backoff_seconds * (2 ** (attempt - 1))
+    else:
+        delay = retry_backoff_seconds * (2 ** (attempt - 1))
+    if delay > 0:
+        time.sleep(delay)
 
 
 def _clean_text(value: Any, fallback: str, max_length: int) -> str:
