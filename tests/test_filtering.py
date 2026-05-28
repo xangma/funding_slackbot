@@ -59,19 +59,37 @@ def test_filter_excludes_when_exclude_keyword_present() -> None:
 
 
 def test_filter_rejects_deadline_too_close() -> None:
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     filt = RuleBasedFilter(
         FilterSettings(
             include_keywords=["AI"],
             min_days_until_deadline=10,
-        )
+        ),
+        now_provider=lambda: now,
     )
 
     result = filt.evaluate(
-        _opportunity(closing_date=datetime.now(timezone.utc) + timedelta(days=2))
+        _opportunity(closing_date=now + timedelta(days=2))
     )
 
     assert result.matched is False
     assert "deadline too soon" in result.reason_text()
+
+
+def test_filter_deadline_uses_injected_clock() -> None:
+    now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    filt = RuleBasedFilter(
+        FilterSettings(
+            include_keywords=["AI"],
+            min_days_until_deadline=10,
+        ),
+        now_provider=lambda: now,
+    )
+
+    result = filt.evaluate(_opportunity(closing_date=now + timedelta(days=11)))
+
+    assert result.matched is True
+    assert "deadline in 11 days" in result.reason_text()
 
 
 def test_filter_keyword_match_uses_word_boundaries() -> None:

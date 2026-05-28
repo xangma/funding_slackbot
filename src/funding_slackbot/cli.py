@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+from datetime import datetime, timezone
+import fcntl
 import ipaddress
 import logging
 import os
+from pathlib import Path
 import sys
 from urllib.parse import urlparse
 
@@ -24,6 +28,10 @@ from funding_slackbot.sources.registry import SourceRegistrationError
 from funding_slackbot.store import SQLiteStore
 
 logger = logging.getLogger(__name__)
+
+
+class LockError(RuntimeError):
+    """Raised when another bot process already holds the run lock."""
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -79,6 +87,26 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Config error: {exc}", file=sys.stderr)
         return 2
 
+    try:
+        with _store_lock(app_config.storage.path):
+            return _run_command(
+                args=args,
+                parser=parser,
+                app_config=app_config,
+                store=store,
+            )
+    except LockError as exc:
+        logger.error("%s", exc)
+        return 1
+
+
+def _run_command(
+    *,
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    app_config: AppConfig,
+    store: SQLiteStore,
+) -> int:
     if args.command == "init-db":
         store.init_db()
         logger.info("Initialized SQLite database at %s", app_config.storage.path)
@@ -142,7 +170,17 @@ def main(argv: list[str] | None = None) -> int:
         reminder_preview_callback=_deadline_dry_run_preview if dry_run else None,
     )
 
+    started_at = datetime.now(timezone.utc)
     stats = service.run_once()
+    completed_at = datetime.now(timezone.utc)
+    if args.command == "run" and not dry_run:
+        _record_run(
+            store=store,
+            started_at=started_at,
+            completed_at=completed_at,
+            command=args.command,
+            stats=stats,
+        )
     logger.info(
         "Run complete | processed=%d matched=%d posted=%d "
         "grouped_messages=%d queued_for_digest=%d pending_digest=%d "
@@ -173,6 +211,52 @@ def _build_store(app_config: AppConfig) -> SQLiteStore:
     if app_config.storage.type != "sqlite":
         raise ConfigError(f"Unsupported storage type: {app_config.storage.type}")
     return SQLiteStore(app_config.storage.path)
+
+
+@contextmanager
+def _store_lock(storage_path: str):
+    lock_target = Path(storage_path).expanduser()
+    lock_target.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_target.with_name(f"{lock_target.name}.lock")
+    with lock_path.open("a", encoding="utf-8") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise LockError(f"Another funding-bot process is using {storage_path}") from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _record_run(
+    *,
+    store: SQLiteStore,
+    started_at: datetime,
+    completed_at: datetime,
+    command: str,
+    stats,
+) -> None:
+    try:
+        store.record_run(
+            started_at=started_at,
+            completed_at=completed_at,
+            command=command,
+            ok=stats.ok,
+            processed=stats.processed,
+            matched=stats.matched,
+            filtered_out=stats.filtered_out,
+            posted=stats.posted,
+            grouped_messages_posted=stats.grouped_messages_posted,
+            queued_for_digest=stats.queued_for_digest,
+            pending_digest=stats.pending_digest,
+            reminders_due=stats.reminders_due,
+            reminders_posted=stats.reminders_posted,
+            errors_count=len(stats.errors),
+            error_summary="; ".join(stats.errors[:3]) or None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to record run telemetry: %s", exc)
 
 
 def _build_llm_client(app_config: AppConfig) -> LocalLLMClient | None:

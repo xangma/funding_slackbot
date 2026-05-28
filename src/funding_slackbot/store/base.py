@@ -39,6 +39,26 @@ class SeenRecord:
     reminder_error: str | None = None
 
 
+@dataclass(slots=True)
+class RunRecord:
+    id: int
+    started_at: datetime
+    completed_at: datetime
+    command: str
+    ok: bool
+    processed: int
+    matched: int
+    filtered_out: int
+    posted: int
+    grouped_messages_posted: int
+    queued_for_digest: int
+    pending_digest: int
+    reminders_due: int
+    reminders_posted: int
+    errors_count: int
+    error_summary: str | None = None
+
+
 class Store(ABC):
     @abstractmethod
     def init_db(self) -> None:
@@ -168,3 +188,29 @@ class Store(ABC):
         error: str,
     ) -> None:
         """Record a failed reminder post attempt so a later run can retry."""
+
+    @abstractmethod
+    def record_run(
+        self,
+        *,
+        started_at: datetime,
+        completed_at: datetime,
+        command: str,
+        ok: bool,
+        processed: int,
+        matched: int,
+        filtered_out: int,
+        posted: int,
+        grouped_messages_posted: int,
+        queued_for_digest: int,
+        pending_digest: int,
+        reminders_due: int,
+        reminders_posted: int,
+        errors_count: int,
+        error_summary: str | None,
+    ) -> None:
+        """Record one completed bot run for operational monitoring."""
+
+    @abstractmethod
+    def last_run(self) -> RunRecord | None:
+        """Return the most recent completed bot run, if any."""

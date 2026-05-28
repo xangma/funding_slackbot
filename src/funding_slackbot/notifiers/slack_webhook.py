@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from urllib.parse import quote
 
 import requests
 
@@ -377,8 +378,11 @@ def _sleep_before_retry(
 
 
 def _escape_mrkdwn(value: str) -> str:
-    return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    escaped = value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    for char in ("\\", "*", "_", "`", "~"):
+        escaped = escaped.replace(char, f"\\{char}")
+    return escaped
 
 
 def _escape_link_url(value: str) -> str:
-    return value.replace(">", "%3E").replace("|", "%7C")
+    return quote(value, safe=":/?#[]@!$'()+,;=%")

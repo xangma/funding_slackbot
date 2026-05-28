@@ -7,7 +7,7 @@ from typing import Any
 
 from funding_slackbot.utils.datetime_utils import parse_datetime_utc
 
-from .base import PostStatus, ReminderStatus, SeenRecord, Store
+from .base import PostStatus, ReminderStatus, RunRecord, SeenRecord, Store
 
 _POST_STATUSES: tuple[PostStatus, ...] = (
     "seen",
@@ -437,10 +437,10 @@ class SQLiteStore(Store):
                 WHERE posted_at IS NOT NULL
                     AND post_status = 'posted'
                     AND closing_date IS NOT NULL
-                    AND closing_date >= ?
-                    AND closing_date <= ?
+                    AND datetime(closing_date) >= datetime(?)
+                    AND datetime(closing_date) <= datetime(?)
                     AND reminder_status NOT IN ('posted', 'posting')
-                ORDER BY closing_date ASC, title ASC
+                ORDER BY datetime(closing_date) ASC, title ASC
                 LIMIT ?
                 """,
                 (now_value, due_before, limit),
@@ -515,8 +515,102 @@ class SQLiteStore(Store):
             )
             connection.commit()
 
+    def record_run(
+        self,
+        *,
+        started_at: datetime,
+        completed_at: datetime,
+        command: str,
+        ok: bool,
+        processed: int,
+        matched: int,
+        filtered_out: int,
+        posted: int,
+        grouped_messages_posted: int,
+        queued_for_digest: int,
+        pending_digest: int,
+        reminders_due: int,
+        reminders_posted: int,
+        errors_count: int,
+        error_summary: str | None,
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO runs (
+                    started_at,
+                    completed_at,
+                    command,
+                    ok,
+                    processed,
+                    matched,
+                    filtered_out,
+                    posted,
+                    grouped_messages_posted,
+                    queued_for_digest,
+                    pending_digest,
+                    reminders_due,
+                    reminders_posted,
+                    errors_count,
+                    error_summary
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _datetime_to_db(started_at),
+                    _datetime_to_db(completed_at),
+                    command,
+                    int(ok),
+                    processed,
+                    matched,
+                    filtered_out,
+                    posted,
+                    grouped_messages_posted,
+                    queued_for_digest,
+                    pending_digest,
+                    reminders_due,
+                    reminders_posted,
+                    errors_count,
+                    error_summary,
+                ),
+            )
+            connection.commit()
+
+    def last_run(self) -> RunRecord | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    id,
+                    started_at,
+                    completed_at,
+                    command,
+                    ok,
+                    processed,
+                    matched,
+                    filtered_out,
+                    posted,
+                    grouped_messages_posted,
+                    queued_for_digest,
+                    pending_digest,
+                    reminders_due,
+                    reminders_posted,
+                    errors_count,
+                    error_summary
+                FROM runs
+                ORDER BY id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+
+        if row is None:
+            return None
+        return _row_to_run_record(row)
+
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.db_path)
+        connection = sqlite3.connect(self.db_path, timeout=5)
+        connection.execute("PRAGMA busy_timeout = 5000")
+        connection.execute("PRAGMA journal_mode = WAL")
         connection.row_factory = sqlite3.Row
         return connection
 
@@ -524,6 +618,7 @@ class SQLiteStore(Store):
         if not _table_exists(connection, "opportunities"):
             _create_opportunities_table(connection, "opportunities")
             _create_indexes(connection)
+            _create_runs_table(connection)
             return
 
         columns = _table_columns(connection, "opportunities")
@@ -532,6 +627,7 @@ class SQLiteStore(Store):
             if not _post_status_accepts_pending_digest(connection):
                 _rebuild_opportunities_table(connection)
             _create_indexes(connection)
+            _create_runs_table(connection)
             return
 
         _migrate_legacy_opportunities_table(connection)
@@ -539,6 +635,7 @@ class SQLiteStore(Store):
         if not _post_status_accepts_pending_digest(connection):
             _rebuild_opportunities_table(connection)
         _create_indexes(connection)
+        _create_runs_table(connection)
 
 
 def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
@@ -645,6 +742,37 @@ def _create_indexes(connection: sqlite3.Connection) -> None:
         """
         CREATE INDEX IF NOT EXISTS idx_opportunities_reminder_status
         ON opportunities (reminder_status)
+        """
+    )
+
+
+def _create_runs_table(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            started_at TEXT NOT NULL,
+            completed_at TEXT NOT NULL,
+            command TEXT NOT NULL,
+            ok INTEGER NOT NULL,
+            processed INTEGER NOT NULL,
+            matched INTEGER NOT NULL,
+            filtered_out INTEGER NOT NULL,
+            posted INTEGER NOT NULL,
+            grouped_messages_posted INTEGER NOT NULL,
+            queued_for_digest INTEGER NOT NULL,
+            pending_digest INTEGER NOT NULL,
+            reminders_due INTEGER NOT NULL,
+            reminders_posted INTEGER NOT NULL,
+            errors_count INTEGER NOT NULL,
+            error_summary TEXT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_runs_completed_at
+        ON runs (completed_at)
         """
     )
 
@@ -824,6 +952,28 @@ def _row_to_seen_record(row: sqlite3.Row) -> SeenRecord:
         ),
         reminder_posted_at=parse_datetime_utc(row["reminder_posted_at"]),
         reminder_error=row["reminder_error"],
+    )
+
+
+def _row_to_run_record(row: sqlite3.Row) -> RunRecord:
+    return RunRecord(
+        id=int(row["id"]),
+        started_at=parse_datetime_utc(row["started_at"]) or datetime.now(timezone.utc),
+        completed_at=parse_datetime_utc(row["completed_at"])
+        or datetime.now(timezone.utc),
+        command=row["command"],
+        ok=bool(row["ok"]),
+        processed=int(row["processed"]),
+        matched=int(row["matched"]),
+        filtered_out=int(row["filtered_out"]),
+        posted=int(row["posted"]),
+        grouped_messages_posted=int(row["grouped_messages_posted"]),
+        queued_for_digest=int(row["queued_for_digest"]),
+        pending_digest=int(row["pending_digest"]),
+        reminders_due=int(row["reminders_due"]),
+        reminders_posted=int(row["reminders_posted"]),
+        errors_count=int(row["errors_count"]),
+        error_summary=row["error_summary"],
     )
 
 

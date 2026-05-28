@@ -172,6 +172,30 @@ def test_rss_fetch_retries_transient_status(
     assert opportunities[0].title == "AI innovation"
 
 
+def test_rss_fetch_raises_when_retryable_status_persists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = [
+        _DummyResponse(b"", status_code=202),
+        _DummyResponse(b"", status_code=202),
+    ]
+
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    monkeypatch.setattr("requests.get", lambda *args, **kwargs: responses.pop(0))
+
+    source = RssSource(
+        SourceSettings(
+            id="ukri_rss",
+            type="rss",
+            url="https://www.ukri.org/opportunity/feed/",
+            options={"retry_attempts": 2, "retry_backoff_seconds": 0},
+        )
+    )
+
+    with pytest.raises(requests.HTTPError, match="retryable HTTP status 202"):
+        source.fetch()
+
+
 def test_wellcome_source_fetches_open_schemes(monkeypatch: pytest.MonkeyPatch) -> None:
     payload = {
         "props": {

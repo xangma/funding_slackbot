@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import re
+from typing import Callable
 
 from funding_slackbot.config import FilterSettings
 from funding_slackbot.models import Opportunity
@@ -10,8 +11,14 @@ from .base import Filter, FilterResult
 
 
 class RuleBasedFilter(Filter):
-    def __init__(self, settings: FilterSettings) -> None:
+    def __init__(
+        self,
+        settings: FilterSettings,
+        *,
+        now_provider: Callable[[], datetime] | None = None,
+    ) -> None:
         self.settings = settings
+        self.now_provider = now_provider or _utcnow
 
     def evaluate(self, opportunity: Opportunity) -> FilterResult:
         reasons: list[str] = []
@@ -60,7 +67,7 @@ class RuleBasedFilter(Filter):
                     reasons=["missing closing date required by deadline filter"],
                 )
 
-            now = datetime.now(timezone.utc)
+            now = self.now_provider().astimezone(timezone.utc)
             delta = opportunity.closing_date - now
             days_until_deadline = int(delta.total_seconds() // 86400)
             if days_until_deadline < self.settings.min_days_until_deadline:
@@ -86,6 +93,10 @@ def _find_hits(keywords: list[str], searchable: str) -> list[str]:
         if pattern and pattern.search(searchable):
             hits.append(keyword)
     return hits
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _build_keyword_pattern(keyword: str) -> re.Pattern[str] | None:

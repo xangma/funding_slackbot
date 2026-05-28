@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from funding_slackbot.filters.base import Filter, FilterResult
 from funding_slackbot.models import (
+    DeadlineReminder,
     Opportunity,
     OpportunityDigest,
     OpportunityGroup,
@@ -53,6 +54,23 @@ class DigestRecordingNotifier(Notifier):
                 for group in digest.groups
                 for match in group.items
             ]
+        )
+
+
+class ReminderRecordingNotifier(Notifier):
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls: list[str] = []
+        self.reminder_calls: list[list[str]] = []
+
+    def post(self, opportunity: Opportunity, match_reason: str) -> None:
+        self.calls.append(opportunity.external_id)
+
+    def post_deadline_reminders(self, reminders: list[DeadlineReminder]) -> None:
+        if self.fail:
+            raise RuntimeError("simulated reminder failure")
+        self.reminder_calls.append(
+            [reminder.opportunity.external_id for reminder in reminders]
         )
 
 
@@ -499,3 +517,174 @@ def test_store_tracks_due_deadline_reminder_once(tmp_path) -> None:
     )
     assert seen is not None
     assert seen.reminder_status == "posted"
+
+
+def test_service_posts_due_deadline_reminders(tmp_path) -> None:
+    store = SQLiteStore(str(tmp_path / "state.sqlite"))
+    store.init_db()
+    now = datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc)
+    opportunity = _opportunity(external_id="reminder-due")
+    closing_date = now + timedelta(days=6)
+    assert store.claim_for_post(
+        external_id=opportunity.external_id,
+        source_id=opportunity.source_id,
+        title=opportunity.title,
+        url=opportunity.url,
+        match_reason="test match",
+        closing_date=closing_date,
+    )
+    store.mark_posted(
+        external_id=opportunity.external_id,
+        source_id=opportunity.source_id,
+        match_reason="test match",
+        posted_at=now - timedelta(days=1),
+    )
+    notifier = ReminderRecordingNotifier()
+
+    stats = FundingOpportunityService(
+        sources=[],
+        filter_engine=AlwaysMatchFilter(),
+        store=store,
+        notifier=notifier,
+        max_posts_per_run=10,
+        record_non_matches_as_seen=True,
+        dry_run=False,
+        deadline_reminders_enabled=True,
+        deadline_reminder_days=7,
+        now_provider=lambda: now,
+    ).run_once()
+
+    assert stats.reminders_due == 1
+    assert stats.reminders_posted == 1
+    assert notifier.reminder_calls == [["reminder-due"]]
+    seen = store.has_seen(
+        source_id=opportunity.source_id,
+        external_id=opportunity.external_id,
+    )
+    assert seen is not None
+    assert seen.reminder_status == "posted"
+
+
+def test_service_marks_deadline_reminder_failed_on_notifier_error(tmp_path) -> None:
+    store = SQLiteStore(str(tmp_path / "state.sqlite"))
+    store.init_db()
+    now = datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc)
+    opportunity = _opportunity(external_id="reminder-fail")
+    assert store.claim_for_post(
+        external_id=opportunity.external_id,
+        source_id=opportunity.source_id,
+        title=opportunity.title,
+        url=opportunity.url,
+        match_reason="test match",
+        closing_date=now + timedelta(days=6),
+    )
+    store.mark_posted(
+        external_id=opportunity.external_id,
+        source_id=opportunity.source_id,
+        match_reason="test match",
+        posted_at=now - timedelta(days=1),
+    )
+
+    stats = FundingOpportunityService(
+        sources=[],
+        filter_engine=AlwaysMatchFilter(),
+        store=store,
+        notifier=ReminderRecordingNotifier(fail=True),
+        max_posts_per_run=10,
+        record_non_matches_as_seen=True,
+        dry_run=False,
+        deadline_reminders_enabled=True,
+        deadline_reminder_days=7,
+        now_provider=lambda: now,
+    ).run_once()
+
+    assert stats.reminders_due == 1
+    assert stats.reminders_posted == 0
+    assert len(stats.errors) == 1
+    seen = store.has_seen(
+        source_id=opportunity.source_id,
+        external_id=opportunity.external_id,
+    )
+    assert seen is not None
+    assert seen.reminder_status == "reminder_failed"
+    assert seen.reminder_error == "simulated reminder failure"
+
+
+def test_service_deadline_reminder_dry_run_does_not_claim(tmp_path) -> None:
+    store = SQLiteStore(str(tmp_path / "state.sqlite"))
+    store.init_db()
+    now = datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc)
+    opportunity = _opportunity(external_id="reminder-preview")
+    assert store.claim_for_post(
+        external_id=opportunity.external_id,
+        source_id=opportunity.source_id,
+        title=opportunity.title,
+        url=opportunity.url,
+        match_reason="test match",
+        closing_date=now + timedelta(days=6),
+    )
+    store.mark_posted(
+        external_id=opportunity.external_id,
+        source_id=opportunity.source_id,
+        match_reason="test match",
+        posted_at=now - timedelta(days=1),
+    )
+    previewed: list[list[str]] = []
+
+    stats = FundingOpportunityService(
+        sources=[],
+        filter_engine=AlwaysMatchFilter(),
+        store=store,
+        notifier=None,
+        max_posts_per_run=10,
+        record_non_matches_as_seen=True,
+        dry_run=True,
+        deadline_reminders_enabled=True,
+        deadline_reminder_days=7,
+        reminder_preview_callback=lambda reminders: previewed.append(
+            [reminder.opportunity.external_id for reminder in reminders]
+        ),
+        now_provider=lambda: now,
+    ).run_once()
+
+    assert stats.reminders_due == 1
+    assert stats.reminders_posted == 0
+    assert previewed == [["reminder-preview"]]
+    seen = store.has_seen(
+        source_id=opportunity.source_id,
+        external_id=opportunity.external_id,
+    )
+    assert seen is not None
+    assert seen.reminder_status == "none"
+
+
+def test_store_records_run_telemetry(tmp_path) -> None:
+    store = SQLiteStore(str(tmp_path / "state.sqlite"))
+    store.init_db()
+    started = datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc)
+    completed = datetime(2026, 1, 1, 9, 1, tzinfo=timezone.utc)
+
+    store.record_run(
+        started_at=started,
+        completed_at=completed,
+        command="run",
+        ok=True,
+        processed=5,
+        matched=2,
+        filtered_out=3,
+        posted=2,
+        grouped_messages_posted=1,
+        queued_for_digest=0,
+        pending_digest=0,
+        reminders_due=1,
+        reminders_posted=1,
+        errors_count=0,
+        error_summary=None,
+    )
+
+    run = store.last_run()
+    assert run is not None
+    assert run.command == "run"
+    assert run.ok is True
+    assert run.processed == 5
+    assert run.reminders_posted == 1

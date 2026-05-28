@@ -209,6 +209,7 @@ class WellcomeSchemesSource(Source):
             headers=headers,
             max_attempts=self.retry_attempts,
             retry_backoff_seconds=self.retry_backoff_seconds,
+            accept_retry_statuses={202},
         )
         response.raise_for_status()
         if response.status_code == 202 and not response.text.strip():
@@ -751,8 +752,10 @@ def _get_with_retries(
     headers: dict[str, str],
     max_attempts: int,
     retry_backoff_seconds: float,
+    accept_retry_statuses: set[int] | None = None,
 ) -> requests.Response:
     retry_statuses = {202, 408, 429, 500, 502, 503, 504}
+    accepted_retry_statuses = accept_retry_statuses or set()
     last_exception: requests.RequestException | None = None
     for attempt in range(1, max_attempts + 1):
         try:
@@ -765,8 +768,16 @@ def _get_with_retries(
             continue
 
         status_code = getattr(response, "status_code", 200)
-        if status_code not in retry_statuses or attempt == max_attempts:
+        if status_code not in retry_statuses:
             return response
+        if attempt == max_attempts:
+            if status_code in accepted_retry_statuses:
+                return response
+            raise requests.HTTPError(
+                f"retryable HTTP status {status_code} from {url} "
+                f"after {max_attempts} attempts",
+                response=response,
+            )
 
         _sleep_before_retry(retry_backoff_seconds, attempt, response)
 

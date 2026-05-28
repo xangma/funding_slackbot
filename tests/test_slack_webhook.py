@@ -90,6 +90,38 @@ def test_payload_uses_not_specified_for_missing_metadata() -> None:
     assert "*Published:* Not specified" in payload["blocks"][1]["text"]["text"]
 
 
+def test_payload_escapes_user_controlled_mrkdwn_and_link_url() -> None:
+    payload = build_slack_payload(
+        _opportunity(
+            title="AI_*`pilot`",
+            url="https://example.test/path?a=1&b=two|bad>tail",
+            summary="Use *bold* _italics_ and `code`",
+            funder="MRC_RSE",
+        ),
+        "keywords: AI",
+    )
+    rendered = render_slack_message_text(
+        _opportunity(
+            title="AI_*`pilot`",
+            url="https://example.test/path?a=1&b=two|bad>tail",
+            summary="Use *bold* _italics_ and `code`",
+            funder="MRC_RSE",
+        ),
+        "keywords: AI",
+    )
+
+    block_text = "\n".join(
+        block["text"]["text"]
+        for block in payload["blocks"]
+        if block.get("type") == "section"
+    )
+    assert r"AI\_\*\`pilot\`" in block_text
+    assert "https://example.test/path?a=1%26b=two%7Cbad%3Etail" in block_text
+    assert r"Use \*bold\* \_italics\_ and \`code\`" in block_text
+    assert r"MRC\_RSE" in block_text
+    assert r"AI\_\*\`pilot\`" in rendered
+
+
 def test_payload_formats_date_only_fields_without_midnight_time() -> None:
     payload = build_slack_payload(
         _opportunity(closing_date=datetime(2026, 3, 30, 0, 0, tzinfo=timezone.utc)),

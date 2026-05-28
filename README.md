@@ -78,7 +78,7 @@ funding-bot --config config.yaml backfill --mark-seen
 
 Important: in config, `slack.webhook_env_var` must be the environment variable name (for example `SLACK_WEBHOOK_URL`), not the webhook URL itself.
 
-If you want a ready-to-use `config.yaml` tuned to your exact interests, start from `config.example.yaml` and adjust the filter keywords/exclusions.
+`config.yaml` is intentionally ignored by git. Keep local or production-specific filters, storage paths, and endpoints there; update `config.example.yaml` when changing shared defaults.
 
 ## Filtering behavior
 
@@ -134,6 +134,8 @@ SQLite schema (`opportunities`):
 - `reminder_error TEXT NULL`
 
 Primary key: `(source_id, external_id)`.
+
+The SQLite database also stores a `runs` table with one row per completed production `run` command. It records timestamps, counts, success state, and a compact error summary for operational checks. SQLite connections use a busy timeout and WAL journaling, and the CLI takes a per-database lock file before running commands to avoid overlapping cron/manual runs.
 
 Before deploying a schema-changing release on `roni1`, back up the current database, then run `funding-bot --config config.yaml init-db` once on the host to apply the migration before the scheduled job resumes.
 
@@ -196,7 +198,7 @@ A sample workflow is included at `.github/workflows/funding-bot-schedule.yml`.
 Notes:
 
 - Set `SLACK_WEBHOOK_URL` as a GitHub Actions secret.
-- Commit your `config.yaml` (without secrets), or generate it in workflow.
+- Generate `config.yaml` in the workflow, or copy it from a secret-backed artifact. Do not commit production `config.yaml`.
 - Workflow restores/saves `data/state.sqlite` via cache keys so dedupe state can persist between runs.
 
 ## Running tests
