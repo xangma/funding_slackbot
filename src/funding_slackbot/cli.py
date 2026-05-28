@@ -7,9 +7,15 @@ import sys
 
 from funding_slackbot.config import AppConfig, ConfigError, load_config
 from funding_slackbot.filters import RuleBasedFilter
+from funding_slackbot.llm import LocalLLMClient
 from funding_slackbot.logging_config import setup_logging
-from funding_slackbot.models import Opportunity
-from funding_slackbot.notifiers import SlackWebhookNotifier, render_slack_message_text
+from funding_slackbot.models import DeadlineReminder, Opportunity, OpportunityDigest
+from funding_slackbot.notifiers import (
+    SlackWebhookNotifier,
+    render_deadline_reminder_text,
+    render_slack_digest_text,
+    render_slack_message_text,
+)
 from funding_slackbot.service import FundingOpportunityService
 from funding_slackbot.sources import Source, create_source
 from funding_slackbot.sources.registry import SourceRegistrationError
@@ -90,6 +96,7 @@ def main(argv: list[str] | None = None) -> int:
 
     filter_engine = RuleBasedFilter(app_config.filters)
     dry_run = args.command == "dry-run" or app_config.posting.dry_run
+    llm_client = _build_llm_client(app_config)
 
     notifier = None
     if not dry_run:
@@ -115,17 +122,43 @@ def main(argv: list[str] | None = None) -> int:
         max_posts_per_run=app_config.posting.max_posts_per_run,
         record_non_matches_as_seen=app_config.posting.record_non_matches_as_seen,
         dry_run=dry_run,
+        llm_client=llm_client,
+        group_opportunities_with_llm=(
+            app_config.llm.enabled and app_config.llm.group_opportunities
+        ),
+        batch_new_opportunities=app_config.digest.batch_new_opportunities,
+        digest_post_at_hour=app_config.digest.post_at_hour,
+        digest_timezone=app_config.digest.timezone,
+        digest_post_when_pending_count_reaches=(
+            app_config.digest.post_when_pending_count_reaches
+        ),
+        deadline_reminders_enabled=app_config.reminders.enabled,
+        deadline_reminder_days=app_config.reminders.days_before_deadline,
+        max_deadline_reminders=app_config.reminders.max_reminders_per_run,
         preview_callback=_slack_dry_run_preview if dry_run else None,
+        digest_preview_callback=_slack_digest_dry_run_preview if dry_run else None,
+        reminder_preview_callback=_deadline_dry_run_preview if dry_run else None,
     )
 
     stats = service.run_once()
     logger.info(
-        "Run complete | processed=%d matched=%d posted=%d filtered_out=%d skipped_already_posted=%d skipped_pending_confirmation=%d skipped_post_in_progress=%d errors=%d",
+        "Run complete | processed=%d matched=%d posted=%d "
+        "grouped_messages=%d queued_for_digest=%d pending_digest=%d "
+        "reminders_due=%d reminders_posted=%d "
+        "filtered_out=%d skipped_already_posted=%d "
+        "skipped_pending_digest=%d skipped_pending_confirmation=%d "
+        "skipped_post_in_progress=%d errors=%d",
         stats.processed,
         stats.matched,
         stats.posted,
+        stats.grouped_messages_posted,
+        stats.queued_for_digest,
+        stats.pending_digest,
+        stats.reminders_due,
+        stats.reminders_posted,
         stats.filtered_out,
         stats.skipped_already_posted,
+        stats.skipped_pending_digest,
         stats.skipped_pending_confirmation,
         stats.skipped_post_in_progress,
         len(stats.errors),
@@ -138,6 +171,24 @@ def _build_store(app_config: AppConfig) -> SQLiteStore:
     if app_config.storage.type != "sqlite":
         raise ConfigError(f"Unsupported storage type: {app_config.storage.type}")
     return SQLiteStore(app_config.storage.path)
+
+
+def _build_llm_client(app_config: AppConfig) -> LocalLLMClient | None:
+    if not app_config.llm.enabled:
+        return None
+
+    api_key = None
+    if app_config.llm.api_key_env_var:
+        api_key = os.getenv(app_config.llm.api_key_env_var, "").strip() or None
+
+    return LocalLLMClient(
+        base_url=app_config.llm.base_url,
+        model=app_config.llm.model,
+        timeout_seconds=app_config.llm.timeout_seconds,
+        max_tokens=app_config.llm.max_tokens,
+        temperature=app_config.llm.temperature,
+        api_key=api_key,
+    )
 
 
 def _build_sources(app_config: AppConfig) -> list[Source]:
@@ -205,6 +256,18 @@ def _run_backfill(*, store: SQLiteStore, sources: list[Source]) -> int:
 def _slack_dry_run_preview(opportunity: Opportunity, reason: str) -> None:
     print("[DRY RUN] WOULD POST TEXT:")
     print(render_slack_message_text(opportunity, reason))
+    print("")
+
+
+def _slack_digest_dry_run_preview(digest: OpportunityDigest) -> None:
+    print("[DRY RUN] WOULD POST GROUPED TEXT:")
+    print(render_slack_digest_text(digest))
+    print("")
+
+
+def _deadline_dry_run_preview(reminders: list[DeadlineReminder]) -> None:
+    print("[DRY RUN] WOULD POST DEADLINE REMINDER TEXT:")
+    print(render_deadline_reminder_text(reminders))
     print("")
 
 

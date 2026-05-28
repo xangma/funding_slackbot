@@ -5,10 +5,20 @@ from datetime import datetime, timezone
 import pytest
 
 from funding_slackbot.cli import _slack_dry_run_preview
-from funding_slackbot.models import Opportunity
+from funding_slackbot.models import (
+    DeadlineReminder,
+    Opportunity,
+    OpportunityDigest,
+    OpportunityGroup,
+    OpportunityMatch,
+)
 from funding_slackbot.notifiers.slack_webhook import (
     SlackWebhookNotifier,
+    build_deadline_reminder_payload,
+    build_slack_digest_payload,
     build_slack_payload,
+    render_deadline_reminder_text,
+    render_slack_digest_text,
     render_slack_message_text,
 )
 
@@ -124,6 +134,45 @@ def test_cli_dry_run_preview_prints_exact_rendered_text(capsys) -> None:
         f"{render_slack_message_text(opportunity, reason)}\n\n"
     )
     assert capsys.readouterr().out == expected
+
+
+def test_digest_payload_keeps_real_links_and_deadlines() -> None:
+    opportunity = _opportunity()
+    digest = OpportunityDigest(
+        title="AI and health funding",
+        introduction="Two related calls.",
+        groups=[
+            OpportunityGroup(
+                heading="AI health",
+                summary="Matched calls for applied AI.",
+                items=[OpportunityMatch(opportunity, "keywords: AI")],
+            )
+        ],
+        generated_by_llm=True,
+    )
+
+    payload = build_slack_digest_payload(digest)
+    rendered = render_slack_digest_text(digest)
+
+    assert payload["text"] == "1 new funding opportunities"
+    assert "Grouped by local LLM" in rendered
+    assert "<https://www.ukri.org/opportunity/test|AI opportunity>" in rendered
+    assert "closes 2026-03-30 17:00 UTC" in rendered
+
+
+def test_deadline_reminder_payload_lists_closing_dates() -> None:
+    reminder = DeadlineReminder(
+        opportunity=_opportunity(),
+        match_reason="keywords: AI",
+        original_posted_at=datetime(2026, 1, 11, tzinfo=timezone.utc),
+    )
+
+    payload = build_deadline_reminder_payload([reminder])
+    rendered = render_deadline_reminder_text([reminder])
+
+    assert payload["text"] == "1 funding deadline reminder(s)"
+    assert "*Funding deadline reminders*" in rendered
+    assert "*Closes:* 2026-03-30 17:00 UTC" in rendered
 
 
 def test_payload_escapes_slack_mrkdwn_control_sequences() -> None:

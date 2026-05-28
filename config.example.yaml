@@ -53,6 +53,28 @@ posting:
   dry_run: false
   record_non_matches_as_seen: true
 
+llm:
+  enabled: false
+  # Example for llama.cpp router mode:
+  # base_url: http://100.123.170.91:8001/v1
+  base_url: http://127.0.0.1:8001/v1
+  model: qwen3.6
+  timeout_seconds: 60
+  max_tokens: 1200
+  temperature: 0.1
+  group_opportunities: false
+
+digest:
+  batch_new_opportunities: false
+  post_at_hour: 9
+  timezone: Europe/London
+  post_when_pending_count_reaches: 10
+
+reminders:
+  enabled: false
+  days_before_deadline: 7
+  max_reminders_per_run: 10
+
 storage:
   type: sqlite
   path: data/state.sqlite

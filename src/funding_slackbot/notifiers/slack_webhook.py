@@ -4,7 +4,7 @@ import time
 
 import requests
 
-from funding_slackbot.models import Opportunity
+from funding_slackbot.models import DeadlineReminder, Opportunity, OpportunityDigest
 from funding_slackbot.utils.datetime_utils import format_datetime, to_utc
 
 from .base import Notifier
@@ -33,6 +33,34 @@ class SlackWebhookNotifier(Notifier):
 
     def post(self, opportunity: Opportunity, match_reason: str) -> None:
         payload = build_slack_payload(opportunity, match_reason)
+        response = _post_with_retries(
+            self.webhook_url,
+            json=payload,
+            timeout_seconds=self.timeout_seconds,
+            max_attempts=self.max_attempts,
+            retry_backoff_seconds=self.retry_backoff_seconds,
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"Slack webhook returned {response.status_code}: {response.text}"
+            )
+
+    def post_digest(self, digest: OpportunityDigest) -> None:
+        payload = build_slack_digest_payload(digest)
+        response = _post_with_retries(
+            self.webhook_url,
+            json=payload,
+            timeout_seconds=self.timeout_seconds,
+            max_attempts=self.max_attempts,
+            retry_backoff_seconds=self.retry_backoff_seconds,
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"Slack webhook returned {response.status_code}: {response.text}"
+            )
+
+    def post_deadline_reminders(self, reminders: list[DeadlineReminder]) -> None:
+        payload = build_deadline_reminder_payload(reminders)
         response = _post_with_retries(
             self.webhook_url,
             json=payload,
@@ -115,8 +143,103 @@ def build_slack_payload(opportunity: Opportunity, match_reason: str) -> dict:
     }
 
 
+def build_slack_digest_payload(digest: OpportunityDigest) -> dict:
+    opportunity_count = sum(len(group.items) for group in digest.groups)
+    title = _escape_mrkdwn(digest.title or "New funding opportunities")
+    intro = _escape_mrkdwn(digest.introduction)
+    source_note = (
+        "Grouped by local LLM."
+        if digest.generated_by_llm
+        else "Grouped by source metadata."
+    )
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*{title}*\n{intro}\n_{source_note}_",
+            },
+        },
+    ]
+
+    for group in digest.groups:
+        lines = [f"*{_escape_mrkdwn(group.heading)}*"]
+        if group.summary:
+            lines.append(_escape_mrkdwn(group.summary))
+        for item in group.items:
+            lines.append(_format_digest_item(item.opportunity, item.match_reason))
+        blocks.append(
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": _truncate("\n".join(lines), 2900),
+                },
+            }
+        )
+
+    return {
+        "text": f"{opportunity_count} new funding opportunities",
+        "blocks": blocks[:50],
+    }
+
+
+def build_deadline_reminder_payload(reminders: list[DeadlineReminder]) -> dict:
+    opportunity_word = "opportunity" if len(reminders) == 1 else "opportunities"
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    "*Funding deadline reminders*\n"
+                    f"{len(reminders)} posted {opportunity_word} closing soon."
+                ),
+            },
+        }
+    ]
+    for reminder in reminders:
+        opportunity = reminder.opportunity
+        lines = [
+            _format_title_link(opportunity),
+            f"*Closes:* {_format_optional_datetime(opportunity.closing_date)}",
+            f"*Funder:* {_escape_mrkdwn(_format_optional_text(opportunity.funder))}",
+            f"*Funding Type:* {_escape_mrkdwn(_format_optional_text(opportunity.funding_type))}",
+        ]
+        if reminder.match_reason:
+            lines.append(f"*Original match:* {_escape_mrkdwn(reminder.match_reason)}")
+        blocks.append(
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": _truncate("\n".join(lines), 2900),
+                },
+            }
+        )
+
+    return {
+        "text": f"{len(reminders)} funding deadline reminder(s)",
+        "blocks": blocks[:50],
+    }
+
+
 def render_slack_message_text(opportunity: Opportunity, match_reason: str) -> str:
     payload = build_slack_payload(opportunity, match_reason)
+    return _render_payload_text(payload)
+
+
+def render_slack_digest_text(digest: OpportunityDigest) -> str:
+    payload = build_slack_digest_payload(digest)
+    return _render_payload_text(payload)
+
+
+def render_deadline_reminder_text(reminders: list[DeadlineReminder]) -> str:
+    payload = build_deadline_reminder_payload(reminders)
+    return _render_payload_text(payload)
+
+
+def _render_payload_text(payload: dict) -> str:
     lines: list[str] = []
 
     top_text = payload.get("text")
@@ -152,6 +275,35 @@ def _append_payload_text(lines: list[str], payload_value: object) -> None:
 # Backward-compatible helper for existing tests/imports.
 def _build_payload(opportunity: Opportunity, match_reason: str) -> dict:
     return build_slack_payload(opportunity, match_reason)
+
+
+def _format_title_link(opportunity: Opportunity) -> str:
+    safe_title = _escape_mrkdwn(opportunity.title).replace("|", r"\|")
+    if opportunity.url:
+        return f"*<{_escape_link_url(opportunity.url)}|{safe_title}>*"
+    return f"*{safe_title}*"
+
+
+def _format_digest_item(opportunity: Opportunity, match_reason: str) -> str:
+    metadata = [
+        f"closes {_format_optional_datetime(opportunity.closing_date)}",
+        _format_optional_text(opportunity.funder),
+    ]
+    metadata_text = "; ".join(
+        _escape_mrkdwn(value) for value in metadata if value != "Not specified"
+    )
+    if metadata_text:
+        metadata_text = f" - {metadata_text}"
+    return (
+        f"• {_format_title_link(opportunity)}{metadata_text}\n"
+        f"  _{_escape_mrkdwn(match_reason)}_"
+    )
+
+
+def _truncate(value: str, max_length: int) -> str:
+    if len(value) <= max_length:
+        return value
+    return f"{value[: max_length - 3]}..."
 
 
 def _format_optional_text(value: str | None) -> str:

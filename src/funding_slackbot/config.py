@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
@@ -45,6 +46,33 @@ class PostingSettings:
 
 
 @dataclass(slots=True)
+class LLMSettings:
+    enabled: bool = False
+    base_url: str = "http://127.0.0.1:8001/v1"
+    model: str = "qwen3.6"
+    api_key_env_var: str | None = None
+    timeout_seconds: int = 60
+    max_tokens: int = 1200
+    temperature: float = 0.1
+    group_opportunities: bool = False
+
+
+@dataclass(slots=True)
+class ReminderSettings:
+    enabled: bool = False
+    days_before_deadline: int = 7
+    max_reminders_per_run: int = 10
+
+
+@dataclass(slots=True)
+class DigestSettings:
+    batch_new_opportunities: bool = False
+    post_at_hour: int = 9
+    timezone: str = "Europe/London"
+    post_when_pending_count_reaches: int = 10
+
+
+@dataclass(slots=True)
 class StorageSettings:
     type: str = "sqlite"
     path: str = "data/state.sqlite"
@@ -56,6 +84,9 @@ class AppConfig:
     filters: FilterSettings = field(default_factory=FilterSettings)
     slack: SlackSettings = field(default_factory=SlackSettings)
     posting: PostingSettings = field(default_factory=PostingSettings)
+    llm: LLMSettings = field(default_factory=LLMSettings)
+    digest: DigestSettings = field(default_factory=DigestSettings)
+    reminders: ReminderSettings = field(default_factory=ReminderSettings)
     storage: StorageSettings = field(default_factory=StorageSettings)
     log_level: str = "INFO"
 
@@ -66,6 +97,19 @@ def _as_string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         raise ConfigError(f"Expected a list of strings, got: {type(value)!r}")
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _as_optional_string(value: Any, *, field_name: str) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    if not normalized:
+        return None
+    if normalized.startswith(("http://", "https://")) and field_name.endswith(
+        "api_key_env_var"
+    ):
+        raise ConfigError(f"{field_name} must be an environment variable name")
+    return normalized
 
 
 def _as_bool(value: Any, *, field_name: str) -> bool:
@@ -96,6 +140,13 @@ def _as_int(value: Any, *, field_name: str, minimum: int | None = None) -> int:
 
     if minimum is not None and parsed < minimum:
         raise ConfigError(f"{field_name} must be >= {minimum}")
+    return parsed
+
+
+def _as_hour(value: Any, *, field_name: str) -> int:
+    parsed = _as_int(value, field_name=field_name, minimum=0)
+    if parsed > 23:
+        raise ConfigError(f"{field_name} must be <= 23")
     return parsed
 
 
@@ -245,6 +296,97 @@ def load_config(path: str | Path) -> AppConfig:
         ),
     )
 
+    raw_llm = parsed.get("llm", {}) or {}
+    if not isinstance(raw_llm, dict):
+        raise ConfigError("llm must be a mapping")
+
+    llm_base_url = (
+        str(raw_llm.get("base_url", "http://127.0.0.1:8001/v1")).strip()
+        or "http://127.0.0.1:8001/v1"
+    )
+    llm_model = str(raw_llm.get("model", "qwen3.6")).strip() or "qwen3.6"
+    llm_settings = LLMSettings(
+        enabled=_as_bool(raw_llm.get("enabled", False), field_name="llm.enabled"),
+        base_url=llm_base_url.rstrip("/"),
+        model=llm_model,
+        api_key_env_var=_as_optional_string(
+            raw_llm.get("api_key_env_var"),
+            field_name="llm.api_key_env_var",
+        ),
+        timeout_seconds=_as_int(
+            raw_llm.get("timeout_seconds", 60),
+            field_name="llm.timeout_seconds",
+            minimum=1,
+        ),
+        max_tokens=_as_int(
+            raw_llm.get("max_tokens", 1200),
+            field_name="llm.max_tokens",
+            minimum=128,
+        ),
+        temperature=_as_float(
+            raw_llm.get("temperature", 0.1),
+            field_name="llm.temperature",
+            minimum=0,
+        ),
+        group_opportunities=_as_bool(
+            raw_llm.get("group_opportunities", False),
+            field_name="llm.group_opportunities",
+        ),
+    )
+
+    raw_digest = parsed.get("digest", {}) or {}
+    if not isinstance(raw_digest, dict):
+        raise ConfigError("digest must be a mapping")
+
+    digest_timezone = (
+        str(raw_digest.get("timezone", "Europe/London")).strip()
+        or "Europe/London"
+    )
+    try:
+        ZoneInfo(digest_timezone)
+    except ZoneInfoNotFoundError as exc:
+        raise ConfigError(
+            f"digest.timezone is not a known timezone: {digest_timezone}"
+        ) from exc
+
+    digest_settings = DigestSettings(
+        batch_new_opportunities=_as_bool(
+            raw_digest.get("batch_new_opportunities", False),
+            field_name="digest.batch_new_opportunities",
+        ),
+        post_at_hour=_as_hour(
+            raw_digest.get("post_at_hour", 9),
+            field_name="digest.post_at_hour",
+        ),
+        timezone=digest_timezone,
+        post_when_pending_count_reaches=_as_int(
+            raw_digest.get("post_when_pending_count_reaches", 10),
+            field_name="digest.post_when_pending_count_reaches",
+            minimum=1,
+        ),
+    )
+
+    raw_reminders = parsed.get("reminders", {}) or {}
+    if not isinstance(raw_reminders, dict):
+        raise ConfigError("reminders must be a mapping")
+
+    reminder_settings = ReminderSettings(
+        enabled=_as_bool(
+            raw_reminders.get("enabled", False),
+            field_name="reminders.enabled",
+        ),
+        days_before_deadline=_as_int(
+            raw_reminders.get("days_before_deadline", 7),
+            field_name="reminders.days_before_deadline",
+            minimum=1,
+        ),
+        max_reminders_per_run=_as_int(
+            raw_reminders.get("max_reminders_per_run", 10),
+            field_name="reminders.max_reminders_per_run",
+            minimum=1,
+        ),
+    )
+
     raw_storage = parsed.get("storage", {}) or {}
     if not isinstance(raw_storage, dict):
         raise ConfigError("storage must be a mapping")
@@ -271,6 +413,9 @@ def load_config(path: str | Path) -> AppConfig:
         filters=filter_settings,
         slack=slack_settings,
         posting=posting_settings,
+        llm=llm_settings,
+        digest=digest_settings,
+        reminders=reminder_settings,
         storage=storage_settings,
         log_level=log_level,
     )

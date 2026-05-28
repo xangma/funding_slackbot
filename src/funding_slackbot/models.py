@@ -19,3 +19,31 @@ class Opportunity:
     funder: str | None = None
     funding_type: str | None = None
     total_fund: str | None = None
+
+
+@dataclass(slots=True)
+class OpportunityMatch:
+    opportunity: Opportunity
+    match_reason: str
+
+
+@dataclass(slots=True)
+class OpportunityGroup:
+    heading: str
+    summary: str
+    items: list[OpportunityMatch]
+
+
+@dataclass(slots=True)
+class OpportunityDigest:
+    title: str
+    introduction: str
+    groups: list[OpportunityGroup]
+    generated_by_llm: bool = False
+
+
+@dataclass(slots=True)
+class DeadlineReminder:
+    opportunity: Opportunity
+    match_reason: str | None
+    original_posted_at: datetime | None
