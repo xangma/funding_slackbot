@@ -168,9 +168,12 @@ class RssSource(Source):
         summary = _html_to_text(str(summary_html))
 
         extracted = _extract_optional_fields(summary)
+        if _needs_ukri_detail_fields(url, extracted):
+            detail_fields = self._detail_fields_for_url(url)
+            extracted = _merge_optional_fields(extracted, detail_fields)
         tags = _extract_tags(entry)
         funder = extracted["funder"]
-        if not funder and tags:
+        if tags and (not funder or _is_ukri_opportunity_url(url)):
             funder = ", ".join(tags)
 
         raw_data = _to_serializable_dict(entry)
@@ -189,6 +192,23 @@ class RssSource(Source):
             funding_type=extracted["funding_type"],
             total_fund=extracted["total_fund"],
         )
+
+    def _detail_fields_for_url(self, url: str) -> dict[str, Any]:
+        headers = {"User-Agent": "funding-slackbot/0.1 (+https://github.com/)"}
+        try:
+            response = _get_with_retries(
+                url,
+                timeout_seconds=self.timeout_seconds,
+                headers=headers,
+                max_attempts=self.retry_attempts,
+                retry_backoff_seconds=self.retry_backoff_seconds,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            logger.warning("Failed to fetch detail metadata for %s: %s", url, exc)
+            return {}
+
+        return _extract_optional_fields(_html_to_text(response.text))
 
 
 class WellcomeSchemesSource(Source):
@@ -850,26 +870,80 @@ def _extract_optional_fields(summary: str) -> dict[str, Any]:
         "total_fund": None,
     }
 
+    pending_key: str | None = None
     for line in summary.splitlines():
         normalized_line = _normalize_whitespace(line)
         if not normalized_line:
             continue
 
+        if pending_key is not None:
+            _set_optional_field(fields, pending_key, normalized_line)
+            pending_key = None
+            continue
+
         lowered = normalized_line.lower()
+        has_colon = ":" in normalized_line
         value = normalized_line.split(":", 1)[1].strip() if ":" in normalized_line else ""
 
         if lowered.startswith("opening date"):
-            fields["opening_date"] = parse_datetime_utc(value)
+            if value:
+                _set_optional_field(fields, "opening_date", value)
+            elif has_colon:
+                pending_key = "opening_date"
         elif lowered.startswith("closing date"):
-            fields["closing_date"] = parse_datetime_utc(value)
+            if value:
+                _set_optional_field(fields, "closing_date", value)
+            elif has_colon:
+                pending_key = "closing_date"
         elif lowered.startswith("funder") or lowered.startswith("council"):
-            fields["funder"] = value or fields["funder"]
+            if value:
+                _set_optional_field(fields, "funder", value)
+            elif has_colon:
+                pending_key = "funder"
         elif lowered.startswith("funding type"):
-            fields["funding_type"] = value
+            if value:
+                _set_optional_field(fields, "funding_type", value)
+            elif has_colon:
+                pending_key = "funding_type"
         elif lowered.startswith("total fund"):
-            fields["total_fund"] = value
+            if value:
+                _set_optional_field(fields, "total_fund", value)
+            elif has_colon:
+                pending_key = "total_fund"
 
     return fields
+
+
+def _set_optional_field(fields: dict[str, Any], key: str, value: str) -> None:
+    if key in {"opening_date", "closing_date"}:
+        fields[key] = parse_datetime_utc(value)
+    elif value:
+        fields[key] = value
+
+
+def _needs_ukri_detail_fields(url: str, fields: dict[str, Any]) -> bool:
+    if not _is_ukri_opportunity_url(url):
+        return False
+    return fields.get("closing_date") is None
+
+
+def _is_ukri_opportunity_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.netloc in {"www.ukri.org", "ukri.org"} and parsed.path.startswith(
+        "/opportunity/"
+    )
+
+
+def _merge_optional_fields(
+    fields: dict[str, Any],
+    fallback_fields: dict[str, Any],
+) -> dict[str, Any]:
+    merged = fields.copy()
+    for key, value in fallback_fields.items():
+        current = merged.get(key)
+        if current in (None, "") and value not in (None, ""):
+            merged[key] = value
+    return merged
 
 
 def _html_to_text(value: str) -> str:

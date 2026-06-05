@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import timezone
+from datetime import datetime, timezone
 
 import pytest
 import requests
@@ -107,6 +107,81 @@ def test_rss_parsing_maps_to_opportunity_and_uses_stable_identifier(monkeypatch:
     assert opportunity.closing_date is not None
 
 
+def test_rss_enriches_missing_ukri_dates_from_detail_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    feed_url = "https://www.ukri.org/opportunity/feed/"
+    detail_url = (
+        "https://www.ukri.org/opportunity/"
+        "airr-compute-opportunity-ai-open-access"
+    )
+    xml = f"""<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+    <rss version=\"2.0\">
+      <channel>
+        <title>Example</title>
+        <item>
+          <title>AIRR compute opportunity: AI open access</title>
+          <link>{detail_url}?utm_source=rss</link>
+          <guid>{detail_url}?utm_source=rss</guid>
+          <pubDate>Thu, 04 Jun 2026 10:00:00 +0000</pubDate>
+          <category>UKRI</category>
+          <description><![CDATA[<p>Compute resource for AI projects.</p>]]></description>
+        </item>
+      </channel>
+    </rss>
+    """.encode("utf-8")
+    detail_html = b"""
+    <html><body>
+      <p>Funders:</p>
+      <p>Arts and Humanities Research Council (AHRC), UKRI</p>
+      <p>Funding type:</p>
+      <p>Other</p>
+      <p>Opening date:</p>
+      <p>4 June 2026 9:00am UK time</p>
+      <p>Closing date:</p>
+      <p>17 July 2026 4:00pm UK time</p>
+      <p>Timeline</p>
+      <p>4 June 2026 9:00am</p>
+      <p>Opening date</p>
+      <p>17 July 2026 4:00pm</p>
+      <p>Closing date</p>
+      <p>24 August 2026</p>
+      <p>Earliest project start date</p>
+    </body></html>
+    """
+
+    def fake_get(url: str, *args: object, **kwargs: object) -> _DummyResponse:
+        if url == feed_url:
+            return _DummyResponse(xml, url=url)
+        assert url == detail_url
+        return _DummyResponse(detail_html, url=url)
+
+    monkeypatch.setattr("requests.get", fake_get)
+
+    source = RssSource(
+        SourceSettings(
+            id="ukri_rss",
+            type="rss",
+            url=feed_url,
+        )
+    )
+
+    opportunity = source.fetch()[0]
+
+    assert opportunity.url == detail_url
+    assert opportunity.funder == "UKRI"
+    assert opportunity.funding_type == "Other"
+    assert opportunity.opening_date == datetime(2026, 6, 4, 8, 0, tzinfo=timezone.utc)
+    assert opportunity.closing_date == datetime(
+        2026,
+        7,
+        17,
+        15,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+
 def test_rss_falls_back_to_url_hash_when_guid_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     xml = b"""<?xml version=\"1.0\" encoding=\"UTF-8\"?>
     <rss version=\"2.0\">
@@ -152,7 +227,11 @@ def test_rss_fetch_retries_transient_status(
       </channel>
     </rss>
     """
-    responses = [_DummyResponse(b"", status_code=503), _DummyResponse(xml)]
+    responses = [
+        _DummyResponse(b"", status_code=503),
+        _DummyResponse(xml),
+        _DummyResponse(b""),
+    ]
 
     monkeypatch.setattr("time.sleep", lambda _: None)
     monkeypatch.setattr("requests.get", lambda *args, **kwargs: responses.pop(0))

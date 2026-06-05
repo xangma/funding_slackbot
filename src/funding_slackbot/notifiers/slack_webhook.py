@@ -77,110 +77,62 @@ class SlackWebhookNotifier(Notifier):
 
 def build_slack_payload(opportunity: Opportunity, match_reason: str) -> dict:
     source_display_raw = _source_display_name(opportunity.source_id)
-    source_display = _escape_mrkdwn(source_display_raw)
-    safe_title = _escape_mrkdwn(opportunity.title).replace("|", r"\|")
-    title_link = (
-        f"*<{_escape_link_url(opportunity.url)}|{safe_title}>*"
-        if opportunity.url
-        else f"*{safe_title}*"
-    )
-    closes_text = _format_optional_datetime(opportunity.closing_date)
-    metadata_text = "\n".join(
-        [
-            f"*Source:* {source_display}",
-            f"*Funder:* {_escape_mrkdwn(_format_optional_text(opportunity.funder))}",
-            f"*Funding Type:* {_escape_mrkdwn(_format_optional_text(opportunity.funding_type))}",
-            f"*Total Fund:* {_escape_mrkdwn(_format_optional_text(opportunity.total_fund))}",
-            f"*Opens:* {_format_optional_datetime(opportunity.opening_date)}",
-            f"*Closes:* {closes_text}",
-            f"*Published:* {_format_optional_datetime(opportunity.published_at)}",
-        ]
-    )
-
-    summary = _escape_mrkdwn(opportunity.summary)
-    if len(summary) > 300:
-        summary = f"{summary[:297]}..."
-
-    text = (
-        f"{opportunity.title} ({opportunity.url})"
-        if opportunity.url
-        else opportunity.title
-    )
-    text = f"{text} | Closes: {closes_text} | Source: {source_display_raw}"
-    text = _escape_mrkdwn(text)
+    summary = _summary_text(opportunity.summary)
+    blocks = [
+        _section(_format_title_link(opportunity)),
+        {
+            "type": "section",
+            "fields": _metadata_fields(
+                opportunity,
+                source_display=source_display_raw,
+            ),
+        },
+        _section(f"*Matched*\n{_escape_mrkdwn(match_reason)}"),
+    ]
+    if summary:
+        blocks.append(_section(f"*Summary*\n{summary}"))
 
     return {
-        "text": text,
-        "blocks": [
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": title_link,
-                },
-            },
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": metadata_text,
-                },
-            },
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": f"*Why it matched:* {_escape_mrkdwn(match_reason)}",
-                },
-            },
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": summary or "(no summary provided)",
-                },
-            },
-        ],
+        "text": _payload_fallback_text(opportunity, source_display_raw),
+        "blocks": blocks,
     }
 
 
 def build_slack_digest_payload(digest: OpportunityDigest) -> dict:
     opportunity_count = sum(len(group.items) for group in digest.groups)
-    title = _escape_mrkdwn(digest.title or "New funding opportunities")
-    intro = _escape_mrkdwn(digest.introduction)
-    source_note = (
-        "Grouped by local LLM."
-        if digest.generated_by_llm
-        else "Grouped by source metadata."
-    )
+    opportunity_word = "opportunity" if opportunity_count == 1 else "opportunities"
+    single_item = next(_digest_items(digest), None) if opportunity_count == 1 else None
+    header_lines = [f"*{_escape_mrkdwn(_digest_title(digest, opportunity_count))}*"]
+    if opportunity_count != 1 and digest.introduction:
+        header_lines.append(_escape_mrkdwn(digest.introduction))
     blocks = [
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f"*{title}*\n{intro}\n_{source_note}_",
+                "text": "\n".join(header_lines),
             },
         },
     ]
 
-    for group in digest.groups:
-        lines = [f"*{_escape_mrkdwn(group.heading)}*"]
-        if group.summary:
-            lines.append(_escape_mrkdwn(group.summary))
-        for item in group.items:
-            lines.append(_format_digest_item(item.opportunity, item.match_reason))
-        blocks.append(
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": _truncate("\n".join(lines), 2900),
-                },
-            }
-        )
+    if opportunity_count == 1:
+        if single_item is not None:
+            blocks.append(_section(_format_digest_item(single_item)))
+    else:
+        for group in digest.groups:
+            heading_lines = [f"*{_escape_mrkdwn(group.heading)}*"]
+            if group.summary:
+                heading_lines.append(_escape_mrkdwn(group.summary))
+            blocks.append(_section("\n".join(heading_lines)))
+            for item in group.items:
+                blocks.append(_section(_format_digest_item(item)))
 
     return {
-        "text": f"{opportunity_count} new funding opportunities",
+        "text": _digest_fallback_text(
+            opportunity_count,
+            opportunity_word,
+            single_item,
+        ),
         "blocks": blocks[:50],
     }
 
@@ -201,23 +153,19 @@ def build_deadline_reminder_payload(reminders: list[DeadlineReminder]) -> dict:
     ]
     for reminder in reminders:
         opportunity = reminder.opportunity
-        lines = [
-            _format_title_link(opportunity),
-            f"*Closes:* {_format_optional_datetime(opportunity.closing_date)}",
-            f"*Funder:* {_escape_mrkdwn(_format_optional_text(opportunity.funder))}",
-            f"*Funding Type:* {_escape_mrkdwn(_format_optional_text(opportunity.funding_type))}",
-        ]
-        if reminder.match_reason:
-            lines.append(f"*Original match:* {_escape_mrkdwn(reminder.match_reason)}")
-        blocks.append(
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": _truncate("\n".join(lines), 2900),
-                },
-            }
+        lines = [_format_title_link(opportunity)]
+        metadata = _inline_metadata(
+            [
+                ("Closes", _format_optional_datetime(opportunity.closing_date)),
+                ("Funder", _format_optional_text(opportunity.funder)),
+                ("Type", _format_optional_text(opportunity.funding_type)),
+            ]
         )
+        if metadata:
+            lines.append(metadata)
+        if reminder.match_reason:
+            lines.append(f"*Original match*\n{_escape_mrkdwn(reminder.match_reason)}")
+        blocks.append(_section("\n".join(lines)))
 
     return {
         "text": f"{len(reminders)} funding deadline reminder(s)",
@@ -243,22 +191,26 @@ def render_deadline_reminder_text(reminders: list[DeadlineReminder]) -> str:
 def _render_payload_text(payload: dict) -> str:
     lines: list[str] = []
 
-    top_text = payload.get("text")
-    if isinstance(top_text, str) and top_text:
-        lines.append(top_text)
-
     blocks = payload.get("blocks")
-    if isinstance(blocks, list):
+    if isinstance(blocks, list) and blocks:
         for block in blocks:
             if not isinstance(block, dict):
                 continue
             _append_payload_text(lines, block.get("text"))
+            fields = block.get("fields")
+            if isinstance(fields, list):
+                for field in fields:
+                    _append_payload_text(lines, field)
             elements = block.get("elements")
             if isinstance(elements, list):
                 for element in elements:
                     if not isinstance(element, dict):
                         continue
                     _append_payload_text(lines, element.get("text"))
+    else:
+        top_text = payload.get("text")
+        if isinstance(top_text, str) and top_text:
+            lines.append(top_text)
 
     return "\n".join(lines)
 
@@ -285,20 +237,107 @@ def _format_title_link(opportunity: Opportunity) -> str:
     return f"*{safe_title}*"
 
 
-def _format_digest_item(opportunity: Opportunity, match_reason: str) -> str:
-    metadata = [
-        f"closes {_format_optional_datetime(opportunity.closing_date)}",
-        _format_optional_text(opportunity.funder),
+def _format_digest_item(match) -> str:
+    opportunity = match.opportunity
+    lines = [_format_title_link(opportunity)]
+    metadata = _inline_metadata(
+        [
+            ("Source", _source_display_name(opportunity.source_id)),
+            ("Funder", _format_optional_text(opportunity.funder)),
+            ("Type", _format_optional_text(opportunity.funding_type)),
+            ("Closes", _format_optional_datetime(opportunity.closing_date)),
+            ("Fund", _format_optional_text(opportunity.total_fund)),
+        ]
+    )
+    if metadata:
+        lines.append(metadata)
+    lines.append(f"*Matched*\n{_escape_mrkdwn(match.match_reason)}")
+    return "\n".join(lines)
+
+
+def _digest_title(digest: OpportunityDigest, opportunity_count: int) -> str:
+    title = digest.title or "New funding opportunities"
+    if opportunity_count == 1 and title == "New funding opportunities":
+        return "New funding opportunity"
+    return title
+
+
+def _digest_fallback_text(
+    opportunity_count: int,
+    opportunity_word: str,
+    single_item,
+) -> str:
+    if opportunity_count == 1 and single_item is not None:
+        return f"New funding opportunity: {single_item.opportunity.title}"
+    return f"{opportunity_count} new funding {opportunity_word}"
+
+
+def _digest_items(digest: OpportunityDigest):
+    for group in digest.groups:
+        yield from group.items
+
+
+def _section(text: str) -> dict:
+    return {
+        "type": "section",
+        "text": {
+            "type": "mrkdwn",
+            "text": _truncate(text, 2900),
+        },
+    }
+
+
+def _metadata_fields(
+    opportunity: Opportunity,
+    *,
+    source_display: str,
+) -> list[dict]:
+    fields = [
+        _field("Source", source_display),
+        _field("Funder", opportunity.funder),
+        _field("Type", opportunity.funding_type),
+        _field("Deadline", _format_optional_datetime(opportunity.closing_date)),
+        _field("Opens", _format_optional_datetime(opportunity.opening_date)),
+        _field("Total fund", opportunity.total_fund),
+        _field("Published", _format_optional_datetime(opportunity.published_at)),
     ]
-    metadata_text = "; ".join(
-        _escape_mrkdwn(value) for value in metadata if value != "Not specified"
+    return [field for field in fields if field is not None]
+
+
+def _field(label: str, value: str | None) -> dict | None:
+    value_text = _format_optional_text(value)
+    if value_text == "Not specified":
+        return None
+    return {
+        "type": "mrkdwn",
+        "text": f"*{label}*\n{_escape_mrkdwn(value_text)}",
+    }
+
+
+def _inline_metadata(items: list[tuple[str, str | None]]) -> str:
+    parts = []
+    for label, value in items:
+        value_text = _format_optional_text(value)
+        if value_text == "Not specified":
+            continue
+        parts.append(f"*{label}:* {_escape_mrkdwn(value_text)}")
+    return " | ".join(parts)
+
+
+def _summary_text(summary: str) -> str:
+    return _truncate(_escape_mrkdwn(summary), 600)
+
+
+def _payload_fallback_text(opportunity: Opportunity, source_display: str) -> str:
+    title = (
+        f"{opportunity.title} ({opportunity.url})"
+        if opportunity.url
+        else opportunity.title
     )
-    if metadata_text:
-        metadata_text = f" - {metadata_text}"
-    return (
-        f"• {_format_title_link(opportunity)}{metadata_text}\n"
-        f"  _{_escape_mrkdwn(match_reason)}_"
-    )
+    parts = [title, f"Source: {source_display}"]
+    if opportunity.closing_date is not None:
+        parts.append(f"Closes: {_format_optional_datetime(opportunity.closing_date)}")
+    return _escape_mrkdwn(" | ".join(parts))
 
 
 def _truncate(value: str, max_length: int) -> str:

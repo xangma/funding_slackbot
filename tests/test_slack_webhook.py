@@ -50,22 +50,32 @@ class _DummyResponse:
         self.headers: dict[str, str] = {}
 
 
+def _block_text(payload: dict) -> str:
+    lines: list[str] = []
+    for block in payload["blocks"]:
+        text = block.get("text")
+        if isinstance(text, dict):
+            lines.append(text["text"])
+        for field in block.get("fields", []):
+            lines.append(field["text"])
+    return "\n".join(lines)
+
+
 def test_payload_includes_consistent_metadata_with_source_display_name() -> None:
     payload = build_slack_payload(_opportunity(), "keywords: AI")
+    fields = [field["text"] for field in payload["blocks"][1]["fields"]]
 
     assert "Closes: 2026-03-30 17:00 UTC" in payload["text"]
     assert "Source: UKRI Funding Finder" in payload["text"]
-    assert payload["blocks"][1]["text"]["text"] == "\n".join(
-        [
-            "*Source:* UKRI Funding Finder",
-            "*Funder:* MRC",
-            "*Funding Type:* Grant",
-            "*Total Fund:* GBP 1000000",
-            "*Opens:* 2026-01-01",
-            "*Closes:* 2026-03-30 17:00 UTC",
-            "*Published:* 2026-01-10 09:00 UTC",
-        ]
-    )
+    assert fields == [
+        "*Source*\nUKRI Funding Finder",
+        "*Funder*\nMRC",
+        "*Type*\nGrant",
+        "*Deadline*\n2026-03-30 17:00 UTC",
+        "*Opens*\n2026-01-01",
+        "*Total fund*\nGBP 1000000",
+        "*Published*\n2026-01-10 09:00 UTC",
+    ]
 
 
 def test_payload_uses_not_specified_for_missing_metadata() -> None:
@@ -81,13 +91,10 @@ def test_payload_uses_not_specified_for_missing_metadata() -> None:
         "keywords: AI",
     )
 
-    assert "Closes: Not specified" in payload["text"]
-    assert "*Funder:* Not specified" in payload["blocks"][1]["text"]["text"]
-    assert "*Funding Type:* Not specified" in payload["blocks"][1]["text"]["text"]
-    assert "*Total Fund:* Not specified" in payload["blocks"][1]["text"]["text"]
-    assert "*Opens:* Not specified" in payload["blocks"][1]["text"]["text"]
-    assert "*Closes:* Not specified" in payload["blocks"][1]["text"]["text"]
-    assert "*Published:* Not specified" in payload["blocks"][1]["text"]["text"]
+    assert "Not specified" not in payload["text"]
+    assert [field["text"] for field in payload["blocks"][1]["fields"]] == [
+        "*Source*\nUKRI Funding Finder"
+    ]
 
 
 def test_payload_escapes_user_controlled_mrkdwn_and_link_url() -> None:
@@ -110,11 +117,7 @@ def test_payload_escapes_user_controlled_mrkdwn_and_link_url() -> None:
         "keywords: AI",
     )
 
-    block_text = "\n".join(
-        block["text"]["text"]
-        for block in payload["blocks"]
-        if block.get("type") == "section"
-    )
+    block_text = _block_text(payload)
     assert r"AI\_\*\`pilot\`" in block_text
     assert "https://example.test/path?a=1%26b=two%7Cbad%3Etail" in block_text
     assert r"Use \*bold\* \_italics\_ and \`code\`" in block_text
@@ -129,7 +132,7 @@ def test_payload_formats_date_only_fields_without_midnight_time() -> None:
     )
 
     assert "Closes: 2026-03-30" in payload["text"]
-    assert "*Closes:* 2026-03-30" in payload["blocks"][1]["text"]["text"]
+    assert "*Deadline*\n2026-03-30" in _block_text(payload)
 
 
 def test_render_slack_message_text_matches_payload_text_content() -> None:
@@ -138,16 +141,17 @@ def test_render_slack_message_text_matches_payload_text_content() -> None:
 
     expected = "\n".join(
         [
-            "AI opportunity (https://www.ukri.org/opportunity/test) | Closes: 2026-03-30 17:00 UTC | Source: UKRI Funding Finder",
             "*<https://www.ukri.org/opportunity/test|AI opportunity>*",
-            "*Source:* UKRI Funding Finder",
-            "*Funder:* MRC",
-            "*Funding Type:* Grant",
-            "*Total Fund:* GBP 1000000",
-            "*Opens:* 2026-01-01",
-            "*Closes:* 2026-03-30 17:00 UTC",
-            "*Published:* 2026-01-10 09:00 UTC",
-            "*Why it matched:* keywords: AI",
+            "*Source*\nUKRI Funding Finder",
+            "*Funder*\nMRC",
+            "*Type*\nGrant",
+            "*Deadline*\n2026-03-30 17:00 UTC",
+            "*Opens*\n2026-01-01",
+            "*Total fund*\nGBP 1000000",
+            "*Published*\n2026-01-10 09:00 UTC",
+            "*Matched*",
+            "keywords: AI",
+            "*Summary*",
             "Funding call for AI projects",
         ]
     )
@@ -186,10 +190,67 @@ def test_digest_payload_keeps_real_links_and_deadlines() -> None:
     payload = build_slack_digest_payload(digest)
     rendered = render_slack_digest_text(digest)
 
-    assert payload["text"] == "1 new funding opportunities"
-    assert "Grouped by local LLM" in rendered
+    assert payload["text"] == "New funding opportunity: AI opportunity"
+    assert "Grouped by" not in rendered
+    assert "AI health" not in rendered
+    assert "Matched calls for applied AI" not in rendered
     assert "<https://www.ukri.org/opportunity/test|AI opportunity>" in rendered
-    assert "closes 2026-03-30 17:00 UTC" in rendered
+    assert "*Closes:* 2026-03-30 17:00 UTC" in rendered
+
+
+def test_digest_payload_keeps_group_headings_for_multiple_items() -> None:
+    digest = OpportunityDigest(
+        title="AI and health funding",
+        introduction="Two related calls.",
+        groups=[
+            OpportunityGroup(
+                heading="AI health",
+                summary="2 matched opportunities.",
+                items=[
+                    OpportunityMatch(_opportunity(), "keywords: AI"),
+                    OpportunityMatch(
+                        _opportunity(title="RSE opportunity"),
+                        "keywords: RSE",
+                    ),
+                ],
+            )
+        ],
+        generated_by_llm=False,
+    )
+
+    rendered = render_slack_digest_text(digest)
+
+    assert "*AI and health funding*" in rendered
+    assert "Two related calls." in rendered
+    assert "Grouped by" not in rendered
+    assert "*AI health*" in rendered
+    assert "2 matched opportunities." in rendered
+
+
+def test_digest_item_omits_missing_closing_date() -> None:
+    digest = OpportunityDigest(
+        title="AI funding",
+        introduction="1 new matching opportunity.",
+        groups=[
+            OpportunityGroup(
+                heading="UKRI",
+                summary="1 matched opportunity.",
+                items=[
+                    OpportunityMatch(
+                        _opportunity(closing_date=None, funder="UKRI"),
+                        "keywords: AI",
+                    )
+                ],
+            )
+        ],
+        generated_by_llm=False,
+    )
+
+    rendered = render_slack_digest_text(digest)
+
+    assert "closes Not specified" not in rendered
+    assert "*Funder:* UKRI" in rendered
+    assert "*Closes:* Not specified" not in rendered
 
 
 def test_deadline_reminder_payload_lists_closing_dates() -> None:
@@ -216,11 +277,7 @@ def test_payload_escapes_slack_mrkdwn_control_sequences() -> None:
         ),
         "matched <AI> & <!channel>",
     )
-    block_text = "\n".join(
-        block["text"]["text"]
-        for block in payload["blocks"]
-        if block["type"] == "section"
-    )
+    block_text = _block_text(payload)
 
     assert "<!here>" not in block_text
     assert "<!channel>" not in block_text
