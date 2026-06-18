@@ -10,6 +10,9 @@ from funding_slackbot.models import Opportunity
 class FilterResult:
     matched: bool
     reasons: list[str] = field(default_factory=list)
+    assessment_summary: str = ""
+    requirements: list[str] = field(default_factory=list)
+    considerations: list[str] = field(default_factory=list)
 
     def reason_text(self) -> str:
         return "; ".join(self.reasons) if self.reasons else "no specific reason"

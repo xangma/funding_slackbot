@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 PostStatus = Literal[
     "seen",
@@ -27,6 +27,12 @@ class SeenRecord:
     post_status: PostStatus
     last_post_attempt_at: datetime | None
     post_error: str | None
+    published_at: datetime | None = None
+    summary: str = ""
+    raw: dict[str, Any] = field(default_factory=dict)
+    assessment_summary: str = ""
+    requirements: list[str] = field(default_factory=list)
+    considerations: list[str] = field(default_factory=list)
     last_seen_at: datetime | None = None
     closing_date: datetime | None = None
     opening_date: datetime | None = None
@@ -78,6 +84,12 @@ class Store(ABC):
         url: str,
         match_reason: str | None,
         posted_at: datetime | None,
+        published_at: datetime | None = None,
+        summary: str = "",
+        raw: dict[str, Any] | None = None,
+        assessment_summary: str = "",
+        requirements: list[str] | None = None,
+        considerations: list[str] | None = None,
         closing_date: datetime | None = None,
         opening_date: datetime | None = None,
         funder: str | None = None,
@@ -95,6 +107,12 @@ class Store(ABC):
         title: str,
         url: str,
         match_reason: str,
+        published_at: datetime | None = None,
+        summary: str = "",
+        raw: dict[str, Any] | None = None,
+        assessment_summary: str = "",
+        requirements: list[str] | None = None,
+        considerations: list[str] | None = None,
         closing_date: datetime | None = None,
         opening_date: datetime | None = None,
         funder: str | None = None,
@@ -113,6 +131,12 @@ class Store(ABC):
         url: str,
         match_reason: str,
         queued_at: datetime,
+        published_at: datetime | None = None,
+        summary: str = "",
+        raw: dict[str, Any] | None = None,
+        assessment_summary: str = "",
+        requirements: list[str] | None = None,
+        considerations: list[str] | None = None,
         closing_date: datetime | None = None,
         opening_date: datetime | None = None,
         funder: str | None = None,

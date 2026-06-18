@@ -115,6 +115,7 @@ def test_load_config_parses_llm_grouping_and_reminders(tmp_path) -> None:
           base_url: http://100.123.170.91:8001/v1/
           model: qwen3.6
           group_opportunities: true
+          assess_opportunities: true
           max_tokens: 512
           retry_attempts: 4
           retry_backoff_seconds: 0.25
@@ -135,6 +136,7 @@ def test_load_config_parses_llm_grouping_and_reminders(tmp_path) -> None:
 
     assert config.llm.enabled is True
     assert config.llm.group_opportunities is True
+    assert config.llm.assess_opportunities is True
     assert config.llm.base_url == "http://100.123.170.91:8001/v1"
     assert config.llm.max_tokens == 512
     assert config.llm.retry_attempts == 4

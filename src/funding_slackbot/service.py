@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Callable
 from zoneinfo import ZoneInfo
 
-from funding_slackbot.filters import Filter
+from funding_slackbot.filters import Filter, FilterResult
 from funding_slackbot.llm import LLMError, LocalLLMClient, build_simple_digest
 from funding_slackbot.models import (
     DeadlineReminder,
@@ -183,23 +183,22 @@ class FundingOpportunityService:
                     continue
 
                 stats.matched += 1
-                reason_text = filter_result.reason_text()
+                match = _match_from_filter_result(opportunity, filter_result)
+                reason_text = match.match_reason
 
                 if self.dry_run:
                     if grouping_enabled:
-                        pending_group.append(
-                            OpportunityMatch(opportunity, reason_text)
-                        )
+                        pending_group.append(match)
                     else:
                         self.preview_callback(opportunity, reason_text)
                     continue
 
                 if batching_enabled:
-                    self._queue_for_digest(opportunity, reason_text, stats)
+                    self._queue_for_digest(match, stats)
                     continue
 
                 if grouping_enabled:
-                    pending_group.append(OpportunityMatch(opportunity, reason_text))
+                    pending_group.append(match)
                     continue
 
                 if self.notifier is None:
@@ -208,7 +207,7 @@ class FundingOpportunityService:
                     stats.errors.append(message)
                     return stats
 
-                self._post_one(opportunity, reason_text, stats)
+                self._post_one(match, stats)
 
             if (
                 grouping_enabled
@@ -244,19 +243,20 @@ class FundingOpportunityService:
 
     def _queue_for_digest(
         self,
-        opportunity: Opportunity,
-        reason_text: str,
+        match: OpportunityMatch,
         stats: RunStats,
     ) -> None:
+        opportunity = match.opportunity
         try:
             queued = self.store.queue_for_digest(
                 external_id=opportunity.external_id,
                 source_id=opportunity.source_id,
                 title=opportunity.title,
                 url=opportunity.url,
-                match_reason=reason_text,
+                match_reason=match.match_reason,
                 queued_at=self._now(),
                 **_opportunity_metadata(opportunity),
+                **_match_assessment_metadata(match),
             )
         except Exception as exc:  # noqa: BLE001
             message = f"failed to queue digest item {opportunity.external_id}: {exc}"
@@ -329,10 +329,10 @@ class FundingOpportunityService:
 
     def _post_one(
         self,
-        opportunity: Opportunity,
-        reason_text: str,
+        match: OpportunityMatch,
         stats: RunStats,
     ) -> None:
+        opportunity = match.opportunity
         if self.notifier is None:
             message = "notifier is required when dry_run is false"
             logger.error(message)
@@ -345,8 +345,9 @@ class FundingOpportunityService:
                 source_id=opportunity.source_id,
                 title=opportunity.title,
                 url=opportunity.url,
-                match_reason=reason_text,
+                match_reason=match.match_reason,
                 **_opportunity_metadata(opportunity),
+                **_match_assessment_metadata(match),
             )
         except Exception as exc:  # noqa: BLE001
             message = f"failed to reserve post {opportunity.external_id}: {exc}"
@@ -360,13 +361,19 @@ class FundingOpportunityService:
             return
 
         try:
-            self.notifier.post(opportunity, reason_text)
+            self.notifier.post(
+                opportunity,
+                match.match_reason,
+                assessment_summary=match.assessment_summary,
+                requirements=match.requirements,
+                considerations=match.considerations,
+            )
         except Exception as exc:  # noqa: BLE001
             self._record_post_failure(opportunity, exc, stats)
             return
 
         stats.posted += 1
-        self._mark_posted(opportunity, reason_text, stats)
+        self._mark_posted(opportunity, match.match_reason, stats)
 
     def _post_grouped(
         self,
@@ -390,6 +397,7 @@ class FundingOpportunityService:
                     url=opportunity.url,
                     match_reason=match.match_reason,
                     **_opportunity_metadata(opportunity),
+                    **_match_assessment_metadata(match),
                 )
             except Exception as exc:  # noqa: BLE001
                 message = f"failed to reserve post {opportunity.external_id}: {exc}"
@@ -611,11 +619,35 @@ class FundingOpportunityService:
 
 def _opportunity_metadata(opportunity: Opportunity) -> dict[str, object]:
     return {
+        "published_at": opportunity.published_at,
+        "summary": opportunity.summary,
+        "raw": opportunity.raw,
         "closing_date": opportunity.closing_date,
         "opening_date": opportunity.opening_date,
         "funder": opportunity.funder,
         "funding_type": opportunity.funding_type,
         "total_fund": opportunity.total_fund,
+    }
+
+
+def _match_from_filter_result(
+    opportunity: Opportunity,
+    filter_result: FilterResult,
+) -> OpportunityMatch:
+    return OpportunityMatch(
+        opportunity=opportunity,
+        match_reason=filter_result.reason_text(),
+        assessment_summary=filter_result.assessment_summary,
+        requirements=filter_result.requirements,
+        considerations=filter_result.considerations,
+    )
+
+
+def _match_assessment_metadata(match: OpportunityMatch) -> dict[str, object]:
+    return {
+        "assessment_summary": match.assessment_summary,
+        "requirements": match.requirements,
+        "considerations": match.considerations,
     }
 
 
@@ -625,9 +657,9 @@ def _record_to_reminder(record: SeenRecord) -> DeadlineReminder:
         external_id=record.external_id,
         title=record.title,
         url=record.url,
-        published_at=None,
-        summary="",
-        raw={},
+        published_at=record.published_at,
+        summary=record.summary,
+        raw=record.raw,
         closing_date=record.closing_date,
         opening_date=record.opening_date,
         funder=record.funder,
@@ -647,9 +679,9 @@ def _record_to_match(record: SeenRecord) -> OpportunityMatch:
         external_id=record.external_id,
         title=record.title,
         url=record.url,
-        published_at=None,
-        summary="",
-        raw={},
+        published_at=record.published_at,
+        summary=record.summary,
+        raw=record.raw,
         closing_date=record.closing_date,
         opening_date=record.opening_date,
         funder=record.funder,
@@ -659,6 +691,9 @@ def _record_to_match(record: SeenRecord) -> OpportunityMatch:
     return OpportunityMatch(
         opportunity=opportunity,
         match_reason=record.match_reason or "Queued funding match.",
+        assessment_summary=record.assessment_summary,
+        requirements=record.requirements,
+        considerations=record.considerations,
     )
 
 

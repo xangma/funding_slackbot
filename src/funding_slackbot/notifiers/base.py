@@ -7,14 +7,28 @@ from funding_slackbot.models import DeadlineReminder, Opportunity, OpportunityDi
 
 class Notifier(ABC):
     @abstractmethod
-    def post(self, opportunity: Opportunity, match_reason: str) -> None:
+    def post(
+        self,
+        opportunity: Opportunity,
+        match_reason: str,
+        *,
+        assessment_summary: str = "",
+        requirements: list[str] | None = None,
+        considerations: list[str] | None = None,
+    ) -> None:
         """Send a matched opportunity to a destination."""
 
     def post_digest(self, digest: OpportunityDigest) -> None:
         """Send a grouped digest of matched opportunities."""
         for group in digest.groups:
             for item in group.items:
-                self.post(item.opportunity, item.match_reason)
+                self.post(
+                    item.opportunity,
+                    item.match_reason,
+                    assessment_summary=item.assessment_summary,
+                    requirements=item.requirements,
+                    considerations=item.considerations,
+                )
 
     def post_deadline_reminders(self, reminders: list[DeadlineReminder]) -> None:
         """Send deadline reminders for already-posted opportunities."""

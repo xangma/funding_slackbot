@@ -32,8 +32,22 @@ class SlackWebhookNotifier(Notifier):
         self.max_attempts = max_attempts
         self.retry_backoff_seconds = retry_backoff_seconds
 
-    def post(self, opportunity: Opportunity, match_reason: str) -> None:
-        payload = build_slack_payload(opportunity, match_reason)
+    def post(
+        self,
+        opportunity: Opportunity,
+        match_reason: str,
+        *,
+        assessment_summary: str = "",
+        requirements: list[str] | None = None,
+        considerations: list[str] | None = None,
+    ) -> None:
+        payload = build_slack_payload(
+            opportunity,
+            match_reason,
+            assessment_summary=assessment_summary,
+            requirements=requirements,
+            considerations=considerations,
+        )
         response = _post_with_retries(
             self.webhook_url,
             json=payload,
@@ -75,9 +89,15 @@ class SlackWebhookNotifier(Notifier):
             )
 
 
-def build_slack_payload(opportunity: Opportunity, match_reason: str) -> dict:
+def build_slack_payload(
+    opportunity: Opportunity,
+    match_reason: str,
+    *,
+    assessment_summary: str = "",
+    requirements: list[str] | None = None,
+    considerations: list[str] | None = None,
+) -> dict:
     source_display_raw = _source_display_name(opportunity.source_id)
-    summary = _summary_text(opportunity.summary)
     blocks = [
         _section(_format_title_link(opportunity)),
         {
@@ -87,10 +107,17 @@ def build_slack_payload(opportunity: Opportunity, match_reason: str) -> dict:
                 source_display=source_display_raw,
             ),
         },
-        _section(f"*Matched*\n{_escape_mrkdwn(match_reason)}"),
     ]
-    if summary:
-        blocks.append(_section(f"*Summary*\n{summary}"))
+    blocks.extend(
+        _section(section)
+        for section in _match_detail_sections(
+            match_reason,
+            opportunity_summary=opportunity.summary,
+            assessment_summary=assessment_summary,
+            requirements=requirements,
+            considerations=considerations,
+        )
+    )
 
     return {
         "text": _payload_fallback_text(opportunity, source_display_raw),
@@ -173,8 +200,21 @@ def build_deadline_reminder_payload(reminders: list[DeadlineReminder]) -> dict:
     }
 
 
-def render_slack_message_text(opportunity: Opportunity, match_reason: str) -> str:
-    payload = build_slack_payload(opportunity, match_reason)
+def render_slack_message_text(
+    opportunity: Opportunity,
+    match_reason: str,
+    *,
+    assessment_summary: str = "",
+    requirements: list[str] | None = None,
+    considerations: list[str] | None = None,
+) -> str:
+    payload = build_slack_payload(
+        opportunity,
+        match_reason,
+        assessment_summary=assessment_summary,
+        requirements=requirements,
+        considerations=considerations,
+    )
     return _render_payload_text(payload)
 
 
@@ -242,17 +282,53 @@ def _format_digest_item(match) -> str:
     lines = [_format_title_link(opportunity)]
     metadata = _inline_metadata(
         [
-            ("Source", _source_display_name(opportunity.source_id)),
+            ("Deadline", _format_optional_datetime(opportunity.closing_date)),
+            ("Opens", _format_optional_datetime(opportunity.opening_date)),
             ("Funder", _format_optional_text(opportunity.funder)),
-            ("Type", _format_optional_text(opportunity.funding_type)),
-            ("Closes", _format_optional_datetime(opportunity.closing_date)),
             ("Fund", _format_optional_text(opportunity.total_fund)),
+            ("Type", _format_optional_text(opportunity.funding_type)),
+            ("Source", _source_display_name(opportunity.source_id)),
+            ("Published", _format_optional_datetime(opportunity.published_at)),
         ]
     )
     if metadata:
         lines.append(metadata)
-    lines.append(f"*Matched*\n{_escape_mrkdwn(match.match_reason)}")
+    lines.extend(
+        _match_detail_sections(
+            match.match_reason,
+            opportunity_summary=opportunity.summary,
+            assessment_summary=match.assessment_summary,
+            requirements=match.requirements,
+            considerations=match.considerations,
+        )
+    )
     return "\n".join(lines)
+
+
+def _match_detail_sections(
+    match_reason: str,
+    *,
+    opportunity_summary: str,
+    assessment_summary: str = "",
+    requirements: list[str] | None = None,
+    considerations: list[str] | None = None,
+) -> list[str]:
+    sections: list[str] = []
+    summary = _summary_text(assessment_summary or opportunity_summary)
+    if summary:
+        sections.append(f"*Summary*\n{summary}")
+
+    sections.append(f"*Fit*\n{_escape_mrkdwn(match_reason)}")
+
+    requirement_text = _format_bullets(requirements)
+    if requirement_text:
+        sections.append(f"*Requirements*\n{requirement_text}")
+
+    consideration_text = _format_bullets(considerations)
+    if consideration_text:
+        sections.append(f"*Considerations*\n{consideration_text}")
+
+    return sections
 
 
 def _digest_title(digest: OpportunityDigest, opportunity_count: int) -> str:
@@ -293,12 +369,12 @@ def _metadata_fields(
     source_display: str,
 ) -> list[dict]:
     fields = [
-        _field("Source", source_display),
-        _field("Funder", opportunity.funder),
-        _field("Type", opportunity.funding_type),
         _field("Deadline", _format_optional_datetime(opportunity.closing_date)),
         _field("Opens", _format_optional_datetime(opportunity.opening_date)),
+        _field("Funder", opportunity.funder),
         _field("Total fund", opportunity.total_fund),
+        _field("Type", opportunity.funding_type),
+        _field("Source", source_display),
         _field("Published", _format_optional_datetime(opportunity.published_at)),
     ]
     return [field for field in fields if field is not None]
@@ -328,15 +404,30 @@ def _summary_text(summary: str) -> str:
     return _truncate(_escape_mrkdwn(summary), 600)
 
 
+def _format_bullets(items: list[str] | None) -> str:
+    if not items:
+        return ""
+    lines = []
+    for item in items[:5]:
+        text = _format_optional_text(item)
+        if text == "Not specified":
+            continue
+        lines.append(f"- {_truncate(_escape_mrkdwn(text), 240)}")
+    return "\n".join(lines)
+
+
 def _payload_fallback_text(opportunity: Opportunity, source_display: str) -> str:
     title = (
         f"{opportunity.title} ({opportunity.url})"
         if opportunity.url
         else opportunity.title
     )
-    parts = [title, f"Source: {source_display}"]
+    parts = [title]
     if opportunity.closing_date is not None:
-        parts.append(f"Closes: {_format_optional_datetime(opportunity.closing_date)}")
+        parts.append(
+            f"Deadline: {_format_optional_datetime(opportunity.closing_date)}"
+        )
+    parts.append(f"Source: {source_display}")
     return _escape_mrkdwn(" | ".join(parts))
 
 

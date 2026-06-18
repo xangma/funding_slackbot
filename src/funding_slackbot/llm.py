@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from dataclasses import dataclass, field
 from typing import Any
 
 import requests
@@ -11,6 +12,7 @@ from funding_slackbot.models import (
     OpportunityDigest,
     OpportunityGroup,
     OpportunityMatch,
+    Opportunity,
 )
 from funding_slackbot.utils.datetime_utils import format_datetime, to_utc
 
@@ -21,6 +23,15 @@ _RETRY_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 
 class LLMError(RuntimeError):
     """Raised when a local LLM request fails or returns unusable output."""
+
+
+@dataclass(slots=True)
+class OpportunityAssessment:
+    matched: bool
+    reason: str
+    summary: str = ""
+    requirements: list[str] = field(default_factory=list)
+    considerations: list[str] = field(default_factory=list)
 
 
 class LocalLLMClient:
@@ -117,6 +128,56 @@ class LocalLLMClient:
             raise LLMError(f"local LLM grouping request failed: {exc}") from exc
 
         return _digest_from_llm_content(content, matches)
+
+    def assess_opportunity(
+        self,
+        opportunity: Opportunity,
+        *,
+        criteria: dict[str, object] | None = None,
+    ) -> OpportunityAssessment | None:
+        """Ask the local LLM to classify a single opportunity.
+
+        Returns an assessment with matched=True/False and a reason string.
+        Returns None only if the LLM response could not be parsed (caller
+        should fall back to rule-based filtering).
+        """
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": _ASSESSMENT_SYSTEM_PROMPT,
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        _opportunity_to_assessment_item(
+                            opportunity,
+                            criteria=criteria or {},
+                            summary_max_chars=self.prompt_summary_chars,
+                        ),
+                        ensure_ascii=True,
+                    ),
+                },
+            ],
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "response_format": {"type": "json_object"},
+        }
+
+        try:
+            data = self._chat_completion(payload)
+            content = data["choices"][0]["message"]["content"]
+        except (
+            KeyError,
+            IndexError,
+            TypeError,
+            ValueError,
+            requests.RequestException,
+        ) as exc:
+            raise LLMError(f"local LLM assessment request failed: {exc}") from exc
+
+        return _filter_result_from_assessment(content)
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -234,21 +295,87 @@ Return JSON only with this exact shape:
   "groups": [
     {
       "heading": "theme name",
-      "summary": "one sentence explaining the theme",
+      "summary": "one sentence explaining why these items are grouped",
       "item_ids": ["exact ids from the input"]
     }
   ]
 }
 Use every input id exactly once. Do not invent ids. Keep headings under 8 words.
 Omit groups that would contain no ids.
+Use match reasons, assessment summaries, requirements, and considerations when choosing groups.
 Do not rewrite deadlines, URLs, funders, or money values; those are rendered by the application."""
+
+_ASSESSMENT_SYSTEM_PROMPT = """You assess whether a funding opportunity matches configured relevance criteria.
+Return JSON only with this exact shape:
+{
+  "matched": true or false,
+  "reason": "one short sentence explaining the decision",
+  "summary": "one concise Slack-ready summary of the opportunity",
+  "requirements": ["relevant eligibility requirements or application constraints"],
+  "considerations": ["important caveats, fit notes, or follow-up checks"]
+}
+The user message contains criteria and one opportunity.
+Use include_keywords as semantic interests, not just literal string matches.
+Treat exclude_keywords as disqualifying themes.
+If include_councils or include_funding_types are present, require compatibility.
+If min_days_until_deadline is present, reject missing or too-soon deadlines.
+Keep lists short. Include only facts supported by the opportunity.
+Prefer including borderline but plausible opportunities; do not invent facts."""
+
+
+def _opportunity_to_assessment_item(
+    opportunity: Opportunity,
+    *,
+    criteria: dict[str, object],
+    summary_max_chars: int,
+) -> dict[str, object]:
+    return {
+        "criteria": criteria,
+        "opportunity": {
+            "id": _match_id_from_parts(opportunity.source_id, opportunity.external_id),
+            "title": opportunity.title,
+            "summary": opportunity.summary[:summary_max_chars],
+            "funder": opportunity.funder,
+            "funding_type": opportunity.funding_type,
+            "total_fund": opportunity.total_fund,
+            "opening_date": _format_for_prompt(opportunity.opening_date),
+            "closing_date": _format_for_prompt(opportunity.closing_date),
+            "published_at": _format_for_prompt(opportunity.published_at),
+        },
+    }
+
+
+def _filter_result_from_assessment(content: str) -> OpportunityAssessment | None:
+    try:
+        parsed = json.loads(_extract_json_object(content))
+    except (TypeError, ValueError):
+        return None
+
+    if not isinstance(parsed, dict):
+        return None
+
+    matched = parsed.get("matched")
+    if not isinstance(matched, bool):
+        return None
+
+    reason = parsed.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        reason = "LLM assessment"
+
+    return OpportunityAssessment(
+        matched=matched,
+        reason=reason.strip(),
+        summary=_clean_text(parsed.get("summary"), "", 600),
+        requirements=_clean_text_list(parsed.get("requirements"), 5, 180),
+        considerations=_clean_text_list(parsed.get("considerations"), 5, 180),
+    )
 
 
 def _match_to_prompt_item(
     match: OpportunityMatch,
     *,
     summary_max_chars: int,
-) -> dict[str, str | None]:
+) -> dict[str, object]:
     opportunity = match.opportunity
     return {
         "id": _match_id(match),
@@ -257,8 +384,13 @@ def _match_to_prompt_item(
         "funder": opportunity.funder,
         "funding_type": opportunity.funding_type,
         "total_fund": opportunity.total_fund,
+        "opening_date": _format_for_prompt(opportunity.opening_date),
         "closing_date": _format_for_prompt(opportunity.closing_date),
+        "published_at": _format_for_prompt(opportunity.published_at),
         "match_reason": match.match_reason,
+        "assessment_summary": match.assessment_summary,
+        "requirements": match.requirements,
+        "considerations": match.considerations,
     }
 
 
@@ -374,7 +506,14 @@ def _format_id_error(label: str, ids: list[str]) -> str | None:
 
 
 def _match_id(match: OpportunityMatch) -> str:
-    return f"{match.opportunity.source_id}:{match.opportunity.external_id}"
+    return _match_id_from_parts(
+        match.opportunity.source_id,
+        match.opportunity.external_id,
+    )
+
+
+def _match_id_from_parts(source_id: str, external_id: str) -> str:
+    return f"{source_id}:{external_id}"
 
 
 def _format_for_prompt(value: Any) -> str | None:
@@ -415,3 +554,17 @@ def _clean_text(value: Any, fallback: str, max_length: int) -> str:
     if not normalized:
         return fallback
     return normalized[:max_length]
+
+
+def _clean_text_list(value: Any, max_items: int, max_length: int) -> list[str]:
+    if not isinstance(value, list):
+        return []
+
+    cleaned: list[str] = []
+    for item in value:
+        text = _clean_text(item, "", max_length)
+        if text:
+            cleaned.append(text)
+        if len(cleaned) >= max_items:
+            break
+    return cleaned

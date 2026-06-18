@@ -66,6 +66,9 @@ llm:
   retry_backoff_seconds: 1.0
   prompt_summary_chars: 600
   group_opportunities: false
+  # When true, the LLM classifies each opportunity for relevance
+  # before the rule-based filter. Falls back to rules on failure.
+  assess_opportunities: false
 
 digest:
   batch_new_opportunities: false

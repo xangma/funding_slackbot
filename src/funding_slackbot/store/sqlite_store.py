@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -46,6 +47,10 @@ class SQLiteStore(Store):
                     posted_at,
                     title,
                     url,
+                    published_at,
+                    summary,
+                    raw_json,
+                    assessment_json,
                     match_reason,
                     post_status,
                     last_post_attempt_at,
@@ -80,6 +85,12 @@ class SQLiteStore(Store):
         url: str,
         match_reason: str | None,
         posted_at: datetime | None,
+        published_at: datetime | None = None,
+        summary: str = "",
+        raw: dict[str, Any] | None = None,
+        assessment_summary: str = "",
+        requirements: list[str] | None = None,
+        considerations: list[str] | None = None,
         closing_date: datetime | None = None,
         opening_date: datetime | None = None,
         funder: str | None = None,
@@ -100,6 +111,10 @@ class SQLiteStore(Store):
                     posted_at,
                     title,
                     url,
+                    published_at,
+                    summary,
+                    raw_json,
+                    assessment_json,
                     match_reason,
                     post_status,
                     last_post_attempt_at,
@@ -116,13 +131,17 @@ class SQLiteStore(Store):
                     reminder_error
                 )
                 VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL,
                     ?, ?, ?, ?, ?, ?, 'none', NULL, NULL, NULL
                 )
                 ON CONFLICT(source_id, external_id) DO UPDATE SET
                     source_id = excluded.source_id,
                     title = excluded.title,
                     url = excluded.url,
+                    published_at = COALESCE(excluded.published_at, opportunities.published_at),
+                    summary = COALESCE(excluded.summary, opportunities.summary),
+                    raw_json = COALESCE(excluded.raw_json, opportunities.raw_json),
+                    assessment_json = COALESCE(excluded.assessment_json, opportunities.assessment_json),
                     last_seen_at = excluded.last_seen_at,
                     closing_date = COALESCE(excluded.closing_date, opportunities.closing_date),
                     opening_date = COALESCE(excluded.opening_date, opportunities.opening_date),
@@ -145,6 +164,14 @@ class SQLiteStore(Store):
                     posted_value,
                     title,
                     url,
+                    _datetime_to_db(published_at),
+                    _text_to_db(summary),
+                    _json_to_db(raw),
+                    _assessment_to_db(
+                        assessment_summary,
+                        requirements,
+                        considerations,
+                    ),
                     match_reason,
                     post_status,
                     now,
@@ -165,6 +192,12 @@ class SQLiteStore(Store):
         title: str,
         url: str,
         match_reason: str,
+        published_at: datetime | None = None,
+        summary: str = "",
+        raw: dict[str, Any] | None = None,
+        assessment_summary: str = "",
+        requirements: list[str] | None = None,
+        considerations: list[str] | None = None,
         closing_date: datetime | None = None,
         opening_date: datetime | None = None,
         funder: str | None = None,
@@ -182,6 +215,10 @@ class SQLiteStore(Store):
                     posted_at,
                     title,
                     url,
+                    published_at,
+                    summary,
+                    raw_json,
+                    assessment_json,
                     match_reason,
                     post_status,
                     last_post_attempt_at,
@@ -198,12 +235,16 @@ class SQLiteStore(Store):
                     reminder_error
                 )
                 VALUES (
-                    ?, ?, ?, NULL, ?, ?, ?, 'posting', ?, NULL,
+                    ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'posting', ?, NULL,
                     ?, ?, ?, ?, ?, ?, 'none', NULL, NULL, NULL
                 )
                 ON CONFLICT(source_id, external_id) DO UPDATE SET
                     title = excluded.title,
                     url = excluded.url,
+                    published_at = COALESCE(excluded.published_at, opportunities.published_at),
+                    summary = COALESCE(excluded.summary, opportunities.summary),
+                    raw_json = COALESCE(excluded.raw_json, opportunities.raw_json),
+                    assessment_json = COALESCE(excluded.assessment_json, opportunities.assessment_json),
                     last_seen_at = excluded.last_seen_at,
                     closing_date = COALESCE(excluded.closing_date, opportunities.closing_date),
                     opening_date = COALESCE(excluded.opening_date, opportunities.opening_date),
@@ -223,6 +264,14 @@ class SQLiteStore(Store):
                     now,
                     title,
                     url,
+                    _datetime_to_db(published_at),
+                    _text_to_db(summary),
+                    _json_to_db(raw),
+                    _assessment_to_db(
+                        assessment_summary,
+                        requirements,
+                        considerations,
+                    ),
                     match_reason,
                     now,
                     now,
@@ -245,6 +294,12 @@ class SQLiteStore(Store):
         url: str,
         match_reason: str,
         queued_at: datetime,
+        published_at: datetime | None = None,
+        summary: str = "",
+        raw: dict[str, Any] | None = None,
+        assessment_summary: str = "",
+        requirements: list[str] | None = None,
+        considerations: list[str] | None = None,
         closing_date: datetime | None = None,
         opening_date: datetime | None = None,
         funder: str | None = None,
@@ -262,6 +317,10 @@ class SQLiteStore(Store):
                     posted_at,
                     title,
                     url,
+                    published_at,
+                    summary,
+                    raw_json,
+                    assessment_json,
                     match_reason,
                     post_status,
                     last_post_attempt_at,
@@ -278,12 +337,16 @@ class SQLiteStore(Store):
                     reminder_error
                 )
                 VALUES (
-                    ?, ?, ?, NULL, ?, ?, ?, 'pending_digest', NULL, NULL,
+                    ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'pending_digest', NULL, NULL,
                     ?, ?, ?, ?, ?, ?, 'none', NULL, NULL, NULL
                 )
                 ON CONFLICT(source_id, external_id) DO UPDATE SET
                     title = excluded.title,
                     url = excluded.url,
+                    published_at = COALESCE(excluded.published_at, opportunities.published_at),
+                    summary = COALESCE(excluded.summary, opportunities.summary),
+                    raw_json = COALESCE(excluded.raw_json, opportunities.raw_json),
+                    assessment_json = COALESCE(excluded.assessment_json, opportunities.assessment_json),
                     last_seen_at = excluded.last_seen_at,
                     closing_date = COALESCE(excluded.closing_date, opportunities.closing_date),
                     opening_date = COALESCE(excluded.opening_date, opportunities.opening_date),
@@ -302,6 +365,14 @@ class SQLiteStore(Store):
                     queued_value,
                     title,
                     url,
+                    _datetime_to_db(published_at),
+                    _text_to_db(summary),
+                    _json_to_db(raw),
+                    _assessment_to_db(
+                        assessment_summary,
+                        requirements,
+                        considerations,
+                    ),
                     match_reason,
                     queued_value,
                     _datetime_to_db(closing_date),
@@ -329,6 +400,10 @@ class SQLiteStore(Store):
                     posted_at,
                     title,
                     url,
+                    published_at,
+                    summary,
+                    raw_json,
+                    assessment_json,
                     match_reason,
                     post_status,
                     last_post_attempt_at,
@@ -419,6 +494,10 @@ class SQLiteStore(Store):
                     posted_at,
                     title,
                     url,
+                    published_at,
+                    summary,
+                    raw_json,
+                    assessment_json,
                     match_reason,
                     post_status,
                     last_post_attempt_at,
@@ -698,6 +777,10 @@ def _create_opportunities_table(
             posted_at TEXT NULL,
             title TEXT NOT NULL,
             url TEXT NOT NULL,
+            published_at TEXT NULL,
+            summary TEXT NULL,
+            raw_json TEXT NULL,
+            assessment_json TEXT NULL,
             match_reason TEXT NULL,
             post_status TEXT NOT NULL DEFAULT 'seen'
                 CHECK (post_status IN ('seen', 'pending_digest', 'posting', 'posted', 'post_failed')),
@@ -783,6 +866,10 @@ def _ensure_deadline_columns(
 ) -> None:
     column_definitions = {
         "last_seen_at": "TEXT NULL",
+        "published_at": "TEXT NULL",
+        "summary": "TEXT NULL",
+        "raw_json": "TEXT NULL",
+        "assessment_json": "TEXT NULL",
         "closing_date": "TEXT NULL",
         "opening_date": "TEXT NULL",
         "funder": "TEXT NULL",
@@ -825,6 +912,10 @@ def _copy_legacy_rows(
     posted_at = legacy_expression("posted_at", "NULL")
     title = legacy_expression("title", "''")
     url = legacy_expression("url", "''")
+    published_at = legacy_expression("published_at", "NULL")
+    summary = legacy_expression("summary", "NULL")
+    raw_json = legacy_expression("raw_json", "NULL")
+    assessment_json = legacy_expression("assessment_json", "NULL")
     match_reason = legacy_expression("match_reason", "NULL")
     post_status = _normalized_status_expression(
         columns,
@@ -867,6 +958,10 @@ def _copy_legacy_rows(
             posted_at,
             title,
             url,
+            published_at,
+            summary,
+            raw_json,
+            assessment_json,
             match_reason,
             post_status,
             last_post_attempt_at,
@@ -889,6 +984,10 @@ def _copy_legacy_rows(
             {posted_at},
             COALESCE({title}, ''),
             COALESCE({url}, ''),
+            {published_at},
+            {summary},
+            {raw_json},
+            {assessment_json},
             {match_reason},
             {post_status},
             {last_post_attempt_at},
@@ -928,6 +1027,7 @@ def _normalized_status_expression(
 
 
 def _row_to_seen_record(row: sqlite3.Row) -> SeenRecord:
+    assessment = _assessment_from_db(row["assessment_json"])
     return SeenRecord(
         external_id=row["external_id"],
         source_id=row["source_id"],
@@ -940,6 +1040,12 @@ def _row_to_seen_record(row: sqlite3.Row) -> SeenRecord:
         post_status=_normalize_post_status(row["post_status"]),
         last_post_attempt_at=parse_datetime_utc(row["last_post_attempt_at"]),
         post_error=row["post_error"],
+        published_at=parse_datetime_utc(row["published_at"]),
+        summary=row["summary"] or "",
+        raw=_json_from_db(row["raw_json"]),
+        assessment_summary=assessment["assessment_summary"],
+        requirements=assessment["requirements"],
+        considerations=assessment["considerations"],
         last_seen_at=parse_datetime_utc(row["last_seen_at"]),
         closing_date=parse_datetime_utc(row["closing_date"]),
         opening_date=parse_datetime_utc(row["opening_date"]),
@@ -975,6 +1081,80 @@ def _row_to_run_record(row: sqlite3.Row) -> RunRecord:
         errors_count=int(row["errors_count"]),
         error_summary=row["error_summary"],
     )
+
+
+def _json_to_db(value: dict[str, Any] | None) -> str | None:
+    if not value:
+        return None
+    try:
+        return json.dumps(value, sort_keys=True, ensure_ascii=True)
+    except TypeError:
+        return json.dumps(_json_safe(value), sort_keys=True, ensure_ascii=True)
+
+
+def _json_from_db(value: str | None) -> dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        decoded = json.loads(value)
+    except (TypeError, ValueError):
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def _assessment_to_db(
+    assessment_summary: str,
+    requirements: list[str] | None,
+    considerations: list[str] | None,
+) -> str | None:
+    assessment = {
+        "assessment_summary": assessment_summary.strip(),
+        "requirements": _text_list(requirements),
+        "considerations": _text_list(considerations),
+    }
+    if not any(assessment.values()):
+        return None
+    return json.dumps(assessment, sort_keys=True, ensure_ascii=True)
+
+
+def _assessment_from_db(value: str | None) -> dict[str, Any]:
+    decoded = _json_from_db(value)
+    return {
+        "assessment_summary": _text_value(decoded.get("assessment_summary")),
+        "requirements": _text_list(decoded.get("requirements")),
+        "considerations": _text_list(decoded.get("considerations")),
+    }
+
+
+def _text_value(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return " ".join(value.split())
+
+
+def _text_to_db(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return value if value.strip() else None
+
+
+def _text_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    cleaned = [_text_value(item) for item in value]
+    return [item for item in cleaned if item]
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
 
 
 def _datetime_to_db(value: datetime | None) -> str | None:

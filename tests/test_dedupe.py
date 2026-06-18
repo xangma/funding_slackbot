@@ -31,11 +31,22 @@ class AlwaysMatchFilter(Filter):
         return FilterResult(matched=True, reasons=["test match"])
 
 
+class RichAssessmentFilter(Filter):
+    def evaluate(self, opportunity: Opportunity) -> FilterResult:
+        return FilterResult(
+            matched=True,
+            reasons=["LLM says this fits"],
+            assessment_summary="LLM assessment summary",
+            requirements=["Lead applicant must be UK based"],
+            considerations=["Confirm internal deadline"],
+        )
+
+
 class RecordingNotifier(Notifier):
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    def post(self, opportunity: Opportunity, match_reason: str) -> None:
+    def post(self, opportunity: Opportunity, match_reason: str, **_: object) -> None:
         self.calls.append(opportunity.external_id)
 
 
@@ -43,11 +54,13 @@ class DigestRecordingNotifier(Notifier):
     def __init__(self) -> None:
         self.individual_calls: list[str] = []
         self.digest_calls: list[list[str]] = []
+        self.digests: list[OpportunityDigest] = []
 
-    def post(self, opportunity: Opportunity, match_reason: str) -> None:
+    def post(self, opportunity: Opportunity, match_reason: str, **_: object) -> None:
         self.individual_calls.append(opportunity.external_id)
 
     def post_digest(self, digest: OpportunityDigest) -> None:
+        self.digests.append(digest)
         self.digest_calls.append(
             [
                 match.opportunity.external_id
@@ -63,7 +76,7 @@ class ReminderRecordingNotifier(Notifier):
         self.calls: list[str] = []
         self.reminder_calls: list[list[str]] = []
 
-    def post(self, opportunity: Opportunity, match_reason: str) -> None:
+    def post(self, opportunity: Opportunity, match_reason: str, **_: object) -> None:
         self.calls.append(opportunity.external_id)
 
     def post_deadline_reminders(self, reminders: list[DeadlineReminder]) -> None:
@@ -125,8 +138,12 @@ class FailingMarkPostedStore(SQLiteStore):
         )
 
 
-def _opportunity(source_id: str = "ukri_rss", external_id: str = "stable-id-123") -> Opportunity:
-    return Opportunity(
+def _opportunity(
+    source_id: str = "ukri_rss",
+    external_id: str = "stable-id-123",
+    **overrides: object,
+) -> Opportunity:
+    opportunity = Opportunity(
         source_id=source_id,
         external_id=external_id,
         title="AI programme",
@@ -135,6 +152,9 @@ def _opportunity(source_id: str = "ukri_rss", external_id: str = "stable-id-123"
         summary="A matching item",
         raw={},
     )
+    for key, value in overrides.items():
+        setattr(opportunity, key, value)
+    return opportunity
 
 
 def _service(
@@ -208,7 +228,7 @@ def test_llm_grouping_posts_one_digest_and_marks_items_posted(tmp_path) -> None:
 
     service = FundingOpportunityService(
         sources=[source],
-        filter_engine=AlwaysMatchFilter(),
+        filter_engine=RichAssessmentFilter(),
         store=store,
         notifier=notifier,
         max_posts_per_run=10,
@@ -243,7 +263,7 @@ def test_batched_llm_grouping_queues_until_digest_cutoff(tmp_path) -> None:
 
     first_stats = FundingOpportunityService(
         sources=[source],
-        filter_engine=AlwaysMatchFilter(),
+        filter_engine=RichAssessmentFilter(),
         store=store,
         notifier=notifier,
         max_posts_per_run=10,
@@ -269,7 +289,7 @@ def test_batched_llm_grouping_queues_until_digest_cutoff(tmp_path) -> None:
     second_now = datetime(2026, 1, 2, 9, 0, tzinfo=timezone.utc)
     second_stats = FundingOpportunityService(
         sources=[source],
-        filter_engine=AlwaysMatchFilter(),
+        filter_engine=RichAssessmentFilter(),
         store=store,
         notifier=notifier,
         max_posts_per_run=10,
@@ -289,6 +309,10 @@ def test_batched_llm_grouping_queues_until_digest_cutoff(tmp_path) -> None:
     assert second_stats.digest_due is True
     assert second_stats.posted == 1
     assert notifier.digest_calls == [["queued"]]
+    posted_match = notifier.digests[0].groups[0].items[0]
+    assert posted_match.assessment_summary == "LLM assessment summary"
+    assert posted_match.requirements == ["Lead applicant must be UK based"]
+    assert posted_match.considerations == ["Confirm internal deadline"]
     seen = store.has_seen(source_id="ukri_rss", external_id="queued")
     assert seen is not None
     assert seen.post_status == "posted"
@@ -410,6 +434,48 @@ def test_existing_legacy_sqlite_rows_are_migrated_without_losing_posted_state(
     assert seen is not None
     assert seen.posted_at is not None
     assert seen.post_status == "posted"
+    assert seen.summary == ""
+    assert seen.raw == {}
+
+
+def test_store_persists_opportunity_payload_for_future_reassessment(tmp_path) -> None:
+    store = SQLiteStore(str(tmp_path / "state.sqlite"))
+    store.init_db()
+    published_at = datetime(2026, 1, 2, 10, 0, tzinfo=timezone.utc)
+    opportunity = _opportunity(
+        published_at=published_at,
+        summary="Detailed summary for later LLM reassessment.",
+        raw={"nested": {"score": 1}, "items": ["a", "b"]},
+    )
+
+    assert store.claim_for_post(
+        external_id=opportunity.external_id,
+        source_id=opportunity.source_id,
+        title=opportunity.title,
+        url=opportunity.url,
+        match_reason="test match",
+        published_at=opportunity.published_at,
+        summary=opportunity.summary,
+        raw=opportunity.raw,
+        assessment_summary="Assessment summary",
+        requirements=["Requirement one"],
+        considerations=["Consideration one"],
+        closing_date=opportunity.closing_date,
+        funder=opportunity.funder,
+    )
+
+    seen = store.has_seen(
+        source_id=opportunity.source_id,
+        external_id=opportunity.external_id,
+    )
+
+    assert seen is not None
+    assert seen.published_at == published_at
+    assert seen.summary == "Detailed summary for later LLM reassessment."
+    assert seen.raw == {"nested": {"score": 1}, "items": ["a", "b"]}
+    assert seen.assessment_summary == "Assessment summary"
+    assert seen.requirements == ["Requirement one"]
+    assert seen.considerations == ["Consideration one"]
 
 
 def test_current_schema_allows_pending_digest_after_migration(tmp_path) -> None:

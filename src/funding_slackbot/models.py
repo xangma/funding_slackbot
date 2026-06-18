@@ -25,6 +25,9 @@ class Opportunity:
 class OpportunityMatch:
     opportunity: Opportunity
     match_reason: str
+    assessment_summary: str = ""
+    requirements: list[str] = field(default_factory=list)
+    considerations: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)

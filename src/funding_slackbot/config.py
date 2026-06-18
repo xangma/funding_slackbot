@@ -58,6 +58,7 @@ class LLMSettings:
     retry_backoff_seconds: float = 1.0
     prompt_summary_chars: int = 600
     group_opportunities: bool = False
+    assess_opportunities: bool = False
 
 
 @dataclass(slots=True)
@@ -349,6 +350,10 @@ def load_config(path: str | Path) -> AppConfig:
         group_opportunities=_as_bool(
             raw_llm.get("group_opportunities", False),
             field_name="llm.group_opportunities",
+        ),
+        assess_opportunities=_as_bool(
+            raw_llm.get("assess_opportunities", False),
+            field_name="llm.assess_opportunities",
         ),
     )
 

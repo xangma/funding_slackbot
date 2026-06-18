@@ -139,7 +139,7 @@ The SQLite database also stores a `runs` table with one row per completed produc
 
 Before deploying a schema-changing release on `roni1`, back up the current database, then run `funding-bot --config config.yaml init-db` once on the host to apply the migration before the scheduled job resumes.
 
-## Local LLM grouping and reminders
+## Local LLM assessment, grouping, and reminders
 
 Enable the bot-side features in `config.yaml`:
 
@@ -148,6 +148,7 @@ llm:
   enabled: true
   base_url: http://127.0.0.1:8001/v1
   model: qwen3.6
+  assess_opportunities: true
   group_opportunities: true
 
 digest:
@@ -169,7 +170,7 @@ curl http://127.0.0.1:8001/health
 curl http://127.0.0.1:8001/v1/models
 ```
 
-The grouping prompt sends normalized opportunity fields and asks the model to return JSON containing only group headings, summaries, and exact opportunity IDs. Slack rendering still uses the original source titles, links, funders, deadlines, and match reasons.
+With `llm.assess_opportunities` enabled, each fetched opportunity is assessed by the local model against the configured filter interests and exclusions. If the model request fails or returns unusable JSON, the bot falls back to the deterministic rule-based filter. The grouping prompt sends normalized opportunity fields and asks the model to return JSON containing only group headings, summaries, and exact opportunity IDs. Slack rendering still uses the original source titles, links, funders, deadlines, and match reasons.
 
 With digest batching enabled, matching opportunities move into `pending_digest` state. The scheduled job keeps fetching every run, but only posts pending digest items once the local time is at or after `digest.post_at_hour` and at least one queued item was first seen before that day's cutoff. This means opportunities that arrive after the morning digest are normally grouped into the next day's digest. The queue also flushes immediately if it reaches `digest.post_when_pending_count_reaches`.
 

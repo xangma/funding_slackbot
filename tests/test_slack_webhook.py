@@ -65,15 +65,15 @@ def test_payload_includes_consistent_metadata_with_source_display_name() -> None
     payload = build_slack_payload(_opportunity(), "keywords: AI")
     fields = [field["text"] for field in payload["blocks"][1]["fields"]]
 
-    assert "Closes: 2026-03-30 17:00 UTC" in payload["text"]
+    assert "Deadline: 2026-03-30 17:00 UTC" in payload["text"]
     assert "Source: UKRI Funding Finder" in payload["text"]
     assert fields == [
-        "*Source*\nUKRI Funding Finder",
-        "*Funder*\nMRC",
-        "*Type*\nGrant",
         "*Deadline*\n2026-03-30 17:00 UTC",
         "*Opens*\n2026-01-01",
+        "*Funder*\nMRC",
         "*Total fund*\nGBP 1000000",
+        "*Type*\nGrant",
+        "*Source*\nUKRI Funding Finder",
         "*Published*\n2026-01-10 09:00 UTC",
     ]
 
@@ -131,7 +131,7 @@ def test_payload_formats_date_only_fields_without_midnight_time() -> None:
         "keywords: AI",
     )
 
-    assert "Closes: 2026-03-30" in payload["text"]
+    assert "Deadline: 2026-03-30" in payload["text"]
     assert "*Deadline*\n2026-03-30" in _block_text(payload)
 
 
@@ -142,17 +142,17 @@ def test_render_slack_message_text_matches_payload_text_content() -> None:
     expected = "\n".join(
         [
             "*<https://www.ukri.org/opportunity/test|AI opportunity>*",
-            "*Source*\nUKRI Funding Finder",
-            "*Funder*\nMRC",
-            "*Type*\nGrant",
             "*Deadline*\n2026-03-30 17:00 UTC",
             "*Opens*\n2026-01-01",
+            "*Funder*\nMRC",
             "*Total fund*\nGBP 1000000",
+            "*Type*\nGrant",
+            "*Source*\nUKRI Funding Finder",
             "*Published*\n2026-01-10 09:00 UTC",
-            "*Matched*",
-            "keywords: AI",
             "*Summary*",
             "Funding call for AI projects",
+            "*Fit*",
+            "keywords: AI",
         ]
     )
 
@@ -195,7 +195,9 @@ def test_digest_payload_keeps_real_links_and_deadlines() -> None:
     assert "AI health" not in rendered
     assert "Matched calls for applied AI" not in rendered
     assert "<https://www.ukri.org/opportunity/test|AI opportunity>" in rendered
-    assert "*Closes:* 2026-03-30 17:00 UTC" in rendered
+    assert "*Opens:* 2026-01-01" in rendered
+    assert "*Deadline:* 2026-03-30 17:00 UTC" in rendered
+    assert "*Published:* 2026-01-10 09:00 UTC" in rendered
 
 
 def test_digest_payload_keeps_group_headings_for_multiple_items() -> None:
@@ -225,6 +227,73 @@ def test_digest_payload_keeps_group_headings_for_multiple_items() -> None:
     assert "Grouped by" not in rendered
     assert "*AI health*" in rendered
     assert "2 matched opportunities." in rendered
+
+
+def test_digest_item_includes_llm_assessment_details() -> None:
+    digest = OpportunityDigest(
+        title="AI funding",
+        introduction="1 new matching opportunity.",
+        groups=[
+            OpportunityGroup(
+                heading="AI health",
+                summary="Grouped because both calls support applied AI.",
+                items=[
+                    OpportunityMatch(
+                        _opportunity(summary="Source summary"),
+                        "Strong fit with AI and health priorities.",
+                        assessment_summary="LLM summary for Slack.",
+                        requirements=[
+                            "UK-based research organisation",
+                            "Industry partner encouraged",
+                        ],
+                        considerations=[
+                            "Check NHS data access plan",
+                            "Budget cap applies",
+                        ],
+                    )
+                ],
+            )
+        ],
+        generated_by_llm=True,
+    )
+
+    rendered = render_slack_digest_text(digest)
+
+    assert "*Fit*" in rendered
+    assert "Strong fit with AI and health priorities." in rendered
+    assert "*Summary*" in rendered
+    assert "LLM summary for Slack." in rendered
+    assert "Source summary" not in rendered
+    assert "*Requirements*" in rendered
+    assert "- UK-based research organisation" in rendered
+    assert "- Industry partner encouraged" in rendered
+    assert "*Considerations*" in rendered
+    assert "- Check NHS data access plan" in rendered
+    assert "- Budget cap applies" in rendered
+
+
+def test_individual_payload_includes_llm_assessment_details() -> None:
+    payload = build_slack_payload(
+        _opportunity(summary="Source summary"),
+        "LLM match reason",
+        assessment_summary="Assessment summary",
+        requirements=["Eligible lead applicant"],
+        considerations=["Confirm internal deadline"],
+    )
+    rendered = render_slack_message_text(
+        _opportunity(summary="Source summary"),
+        "LLM match reason",
+        assessment_summary="Assessment summary",
+        requirements=["Eligible lead applicant"],
+        considerations=["Confirm internal deadline"],
+    )
+
+    block_text = _block_text(payload)
+    assert "*Fit*" in block_text
+    assert "Assessment summary" in block_text
+    assert "Source summary" not in block_text
+    assert "- Eligible lead applicant" in rendered
+    assert "- Confirm internal deadline" in rendered
 
 
 def test_digest_item_omits_missing_closing_date() -> None:

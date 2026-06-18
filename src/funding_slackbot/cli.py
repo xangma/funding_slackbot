@@ -12,7 +12,7 @@ import sys
 from urllib.parse import urlparse
 
 from funding_slackbot.config import AppConfig, ConfigError, load_config
-from funding_slackbot.filters import RuleBasedFilter
+from funding_slackbot.filters import LLMAssessmentFilter, RuleBasedFilter
 from funding_slackbot.llm import LocalLLMClient
 from funding_slackbot.logging_config import setup_logging
 from funding_slackbot.models import DeadlineReminder, Opportunity, OpportunityDigest
@@ -124,9 +124,19 @@ def _run_command(
             parser.error("backfill requires --mark-seen")
         return _run_backfill(store=store, sources=sources)
 
-    filter_engine = RuleBasedFilter(app_config.filters)
-    dry_run = args.command == "dry-run" or app_config.posting.dry_run
     llm_client = _build_llm_client(app_config)
+    use_llm_assessment = (
+        app_config.llm.enabled and app_config.llm.assess_opportunities
+    )
+    if use_llm_assessment and llm_client is not None:
+        filter_engine = LLMAssessmentFilter(
+            app_config.filters,
+            llm_client=llm_client,
+            llm_assessment_enabled=True,
+        )
+    else:
+        filter_engine = RuleBasedFilter(app_config.filters)
+    dry_run = args.command == "dry-run" or app_config.posting.dry_run
 
     notifier = None
     if not dry_run:
@@ -351,6 +361,14 @@ def _run_backfill(*, store: SQLiteStore, sources: list[Source]) -> int:
                     url=opportunity.url,
                     match_reason="backfill mark_seen",
                     posted_at=None,
+                    published_at=opportunity.published_at,
+                    summary=opportunity.summary,
+                    raw=opportunity.raw,
+                    closing_date=opportunity.closing_date,
+                    opening_date=opportunity.opening_date,
+                    funder=opportunity.funder,
+                    funding_type=opportunity.funding_type,
+                    total_fund=opportunity.total_fund,
                 )
                 marked += 1
             except Exception as exc:  # noqa: BLE001
