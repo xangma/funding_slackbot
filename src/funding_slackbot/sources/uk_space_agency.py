@@ -72,11 +72,14 @@ class UkSpaceAgencyFundingSource(Source):
         if not title or title.lower().startswith("closed opportunities"):
             return None
 
+        text = html_to_text(body)
+        if _is_closed_until_further_notice(text):
+            return None
+
         link_match = _LINK.search(body)
         url = canonicalize_url(
             urljoin(self.url, link_match.group("href")) if link_match else self.url
         )
-        text = html_to_text(body)
         closing_date = _latest_date_from_text(text)
         money_match = _MONEY.search(text)
 
@@ -105,6 +108,13 @@ def _latest_date_from_text(text: str) -> datetime | None:
             if parsed is not None:
                 candidates.append(parsed)
     return max(candidates) if candidates else None
+
+
+def _is_closed_until_further_notice(text: str) -> bool:
+    return (
+        re.search(r"\bclosed\s+until\s+further\s+notice\b", text, re.IGNORECASE)
+        is not None
+    )
 
 
 def _line_value(text: str, label: str) -> str | None:

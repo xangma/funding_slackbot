@@ -321,6 +321,14 @@ class TestUkSpaceAgencyFundingSource:
         <p>Deadline: 15 August 2026</p>
         <p>Funding: \xc2\xa31 million available for space technology.</p>
         <a href="/funding/open-call-1">Details</a>
+        <h2 id="rolling-call">Rolling Call for Proposals</h2>
+        <p>Deadline: Open until further notice</p>
+        <p>Funding: \xc2\xa3500,000 available for space technology.</p>
+        <a href="/funding/rolling-call">Details</a>
+        <h2 id="closed-call">Closed Call for Proposals</h2>
+        <p>Deadline: Closed until further notice</p>
+        <p>Funding: \xc2\xa350,000 available for space community activities.</p>
+        <a href="/funding/closed-call">Details</a>
         <h2 id="closed">Closed Opportunities</h2>
         <p>Past calls listed here.</p>
         </body></html>
@@ -339,6 +347,8 @@ class TestUkSpaceAgencyFundingSource:
         opportunities = source.fetch()
         titles = [o.title for o in opportunities]
         assert "Open Call for Proposals" in titles
+        assert "Rolling Call for Proposals" in titles
+        assert "Closed Call for Proposals" not in titles
         assert "Closed Opportunities" not in titles
 
 
