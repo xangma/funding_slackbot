@@ -529,7 +529,7 @@ def test_innovation_source_dedupes_against_ukri_titles(monkeypatch: pytest.Monke
           <h2 class="govuk-heading-m">
             <a class="govuk-link" href="/competition/2401/overview/xyz">Unique Innovation Competition</a>
           </h2>
-          <div class="wysiwyg-styles">Only on innovation funding search.</div>
+          <div class="wysiwyg-styles">Organisations can apply for a share of up to \xc2\xa35 million for projects only on innovation funding search.</div>
           <dl class="date-definition-list">
             <dt>Opened:</dt><dd>12 February 2026</dd>
             <dt>Closes:</dt><dd>20 April 2026</dd>
@@ -575,6 +575,7 @@ def test_innovation_source_dedupes_against_ukri_titles(monkeypatch: pytest.Monke
     assert opportunity.title == "Unique Innovation Competition"
     assert opportunity.external_id == "innovation-competition:2401"
     assert opportunity.funder == "Innovate UK"
+    assert opportunity.total_fund == "up to \u00a35 million"
     assert opportunity.closing_date is not None
     assert opportunity.closing_date.tzinfo == timezone.utc
 
@@ -753,7 +754,8 @@ def test_leverhulme_listings_source_falls_back_to_closing_dates(
             id="leverhulme_listings",
             type="leverhulme_listings",
             url="https://www.leverhulme.ac.uk/listings",
-        )
+        ),
+        now_provider=lambda: datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
     )
     opportunities = source.fetch()
     _print_parsed_example(
@@ -796,7 +798,8 @@ def test_leverhulme_listings_source_uses_fallback_when_listings_forbidden(
             id="leverhulme_listings",
             type="leverhulme_listings",
             url="https://www.leverhulme.ac.uk/listings",
-        )
+        ),
+        now_provider=lambda: datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
     )
     opportunities = source.fetch()
 

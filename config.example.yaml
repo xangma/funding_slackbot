@@ -23,6 +23,87 @@ sources:
     timeout_seconds: 30
     retry_attempts: 3
     retry_backoff_seconds: 1
+  - id: innovation_funding_search
+    type: innovation_funding_search
+    url: https://apply-for-innovation-funding.service.gov.uk/competition/search
+    enabled: true
+    timeout_seconds: 30
+    retry_attempts: 3
+    retry_backoff_seconds: 1
+  - id: aria_funding_opportunities
+    type: aria_funding_opportunities
+    url: https://aria.org.uk/funding-opportunities
+    enabled: true
+    timeout_seconds: 30
+    retry_attempts: 3
+    retry_backoff_seconds: 1
+  - id: british_academy_funding
+    type: british_academy_funding
+    url: https://www.thebritishacademy.ac.uk/funding/
+    enabled: false
+    # British Academy site is Cloudflare-protected for non-browser requests.
+    # Enable once a stable public endpoint is available.
+    timeout_seconds: 30
+    retry_attempts: 3
+    retry_backoff_seconds: 1
+  - id: nihr_funding_opportunities
+    type: nihr_funding_opportunities
+    url: https://www.nihr.ac.uk/funding-opportunities
+    enabled: true
+    timeout_seconds: 30
+    retry_attempts: 3
+    retry_backoff_seconds: 1
+  - id: cancer_research_horizons_funding
+    type: cancer_research_horizons_funding
+    url: https://www.cancerresearchhorizons.com/researchers/access-funding
+    enabled: true
+    timeout_seconds: 30
+    retry_attempts: 3
+    retry_backoff_seconds: 1
+  - id: horizon_europe_funding
+    type: horizon_europe_funding
+    url: https://api.tech.ec.europa.eu/search-api/prod/rest/search
+    enabled: true
+    timeout_seconds: 30
+    retry_attempts: 3
+    retry_backoff_seconds: 1
+    page_size: 50
+    max_results: 50
+    search_terms:
+      - artificial intelligence
+      - health
+      - robotics
+      - bioinformatics
+      - climate
+      - space
+  - id: uk_space_agency_funding
+    type: uk_space_agency_funding
+    url: https://www.gov.uk/guidance/apply-for-funding-academic-community-and-educational
+    enabled: true
+    timeout_seconds: 30
+    retry_attempts: 3
+    retry_backoff_seconds: 1
+  - id: raeng_programmes
+    type: raeng_programmes
+    url: https://raeng.org.uk/programmes-and-prizes/programmes/uk-grants-and-prizes/support-for-research/
+    enabled: true
+    timeout_seconds: 30
+    retry_attempts: 3
+    retry_backoff_seconds: 1
+  - id: royal_society_application_dates
+    type: royal_society_application_dates
+    url: https://royalsociety.org/grants/application-dates/
+    enabled: true
+    timeout_seconds: 30
+    retry_attempts: 3
+    retry_backoff_seconds: 1
+  - id: academy_medical_sciences_grants
+    type: academy_medical_sciences_grants
+    url: https://acmedsci.ac.uk/grants-and-schemes/grant-schemes
+    enabled: true
+    timeout_seconds: 30
+    retry_attempts: 3
+    retry_backoff_seconds: 1
 
 filters:
   include_keywords:

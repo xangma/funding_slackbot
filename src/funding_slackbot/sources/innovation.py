@@ -39,6 +39,15 @@ _DATE_PAIR = re.compile(
 )
 _COMPETITION_ID = re.compile(r"/competition/(?P<id>\d+)/")
 _TITLE_CLEAN = re.compile(r"[^a-z0-9]+")
+_MONEY_VALUE = (
+    r"\u00a3[0-9](?:[0-9,]*[0-9])?(?:\.[0-9]+)?"
+    r"(?:\s*(?:million|billion|k|m))?"
+)
+_FUNDING_AMOUNT_PATTERNS = (
+    re.compile(rf"\b(?:share of )?(up to {_MONEY_VALUE})", re.IGNORECASE),
+    re.compile(rf"\bgrant of ({_MONEY_VALUE})", re.IGNORECASE),
+    re.compile(rf"\b({_MONEY_VALUE})", re.IGNORECASE),
+)
 _NUMBER_WORDS = {
     "zero": "0",
     "one": "1",
@@ -100,6 +109,7 @@ class InnovationFundingSearchSource(Source):
             closing_date = parse_datetime_utc(card.get("closes"))
             opening_date = parse_datetime_utc(card.get("opens"))
             summary = html_to_text(card.get("summary", ""))
+            total_fund = _extract_funding_amount(summary)
 
             opportunities.append(
                 Opportunity(
@@ -114,7 +124,7 @@ class InnovationFundingSearchSource(Source):
                     opening_date=opening_date,
                     funder="Innovate UK",
                     funding_type="Competition",
-                    total_fund=None,
+                    total_fund=total_fund,
                 )
             )
 
@@ -172,6 +182,14 @@ def _extract_competition_id(url_value: str) -> str | None:
     if match is None:
         return None
     return match.group("id")
+
+
+def _extract_funding_amount(summary: str) -> str | None:
+    for pattern in _FUNDING_AMOUNT_PATTERNS:
+        match = pattern.search(summary)
+        if match is not None:
+            return normalize_whitespace(match.group(1))
+    return None
 
 
 def _normalize_competition_title(value: str) -> str:

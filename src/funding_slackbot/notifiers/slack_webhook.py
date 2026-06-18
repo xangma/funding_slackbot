@@ -16,6 +16,15 @@ _SOURCE_DISPLAY_NAMES = {
     "leverhulme_listings": "Leverhulme Trust Listings",
     "innovation_funding_search": "Innovation Funding Search",
     "portsmouth_jobs": "University of Portsmouth Jobs",
+    "aria_funding_opportunities": "ARIA Funding Opportunities",
+    "british_academy_funding": "British Academy Funding",
+    "nihr_funding_opportunities": "NIHR Funding Opportunities",
+    "cancer_research_horizons_funding": "Cancer Research Horizons",
+    "horizon_europe_funding": "Horizon Europe Funding",
+    "uk_space_agency_funding": "UK Space Agency Funding",
+    "raeng_programmes": "Royal Academy of Engineering Programmes",
+    "royal_society_application_dates": "Royal Society Application Dates",
+    "academy_medical_sciences_grants": "Academy of Medical Sciences Grants",
 }
 
 

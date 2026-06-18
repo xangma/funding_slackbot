@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from typing import Callable
 from urllib.parse import urljoin
 
 import requests
@@ -35,9 +36,15 @@ _LEVERHULME_NON_FATAL_STATUS_CODES = {403, 404}
 
 
 class LeverhulmeListingsSource(Source):
-    def __init__(self, settings: SourceSettings) -> None:
+    def __init__(
+        self,
+        settings: SourceSettings,
+        *,
+        now_provider: Callable[[], datetime] | None = None,
+    ) -> None:
         super().__init__(source_id=settings.id)
         self.url = settings.url
+        self._now_provider = now_provider or (lambda: datetime.now(timezone.utc))
         (
             self.timeout_seconds,
             self.retry_attempts,
@@ -46,6 +53,7 @@ class LeverhulmeListingsSource(Source):
 
     def fetch(self) -> list[Opportunity]:
         headers = default_headers()
+        today = self._today_utc()
         response = self._fetch_page(self.url, headers)
         page_url = self.url
         rows: list[dict[str, str]] = []
@@ -90,6 +98,11 @@ class LeverhulmeListingsSource(Source):
                 if date_id in seen_date_ids:
                     continue
                 seen_date_ids.add(date_id)
+
+                # Keep same-day deadlines; only skip dates before today.
+                if closing_date is not None and closing_date.date() < today:
+                    continue
+
                 opportunities.append(
                     Opportunity(
                         source_id=self.source_id,
@@ -140,6 +153,12 @@ class LeverhulmeListingsSource(Source):
                 )
                 return None
             raise
+
+    def _today_utc(self) -> date:
+        now = self._now_provider()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        return now.astimezone(timezone.utc).date()
 
 
 def _extract_leverhulme_rows(page_text: str) -> list[dict[str, str]]:

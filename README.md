@@ -2,7 +2,7 @@
 
 Modular Python 3.12 service that polls funding opportunity sources, filters relevance, deduplicates, and posts new matches to Slack.
 
-Primary sources implemented: UKRI Funding Finder RSS, Wellcome CMS scheme pages, Innovate UK funding search, and Leverhulme listings.
+Primary sources implemented: UKRI Funding Finder RSS, Wellcome CMS scheme pages, Innovate UK funding search, Leverhulme listings, NIHR, Horizon Europe, Royal Society, Royal Academy of Engineering, Academy of Medical Sciences, ARIA, UK Space Agency, and Cancer Research Horizons. British Academy is registered but disabled in the example config because its funding pages are Cloudflare-protected for non-browser requests.
 
 ## Features
 
