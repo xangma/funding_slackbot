@@ -210,11 +210,16 @@ pytest
 
 ## Extending with new sources
 
-Add a new source by implementing `Source` and registering it in `sources/registry.py`:
+Add a new source as a small module under `src/funding_slackbot/sources/`.
+Each scraper should own only the parsing and source-specific normalization for
+one external site or API. Put reusable HTTP, text cleanup, and serialization
+helpers in `_common.py` instead of copying them between scrapers.
 
-1. Implement `fetch()` returning normalized `Opportunity` instances.
-2. Register via `@register_source("your_type")`.
-3. Add source entry in config with `type: your_type`.
+1. Implement `Source.fetch()` returning normalized `Opportunity` instances.
+2. Register a factory in the same module via `@register_source("your_type")`.
+3. Import the source class from `sources/__init__.py` so registration happens at startup.
+4. Add a source entry in config with `type: your_type`.
+5. Add focused parser tests using fixture HTML or JSON.
 
 No changes to filter/store/notifier/service flow are required.
 

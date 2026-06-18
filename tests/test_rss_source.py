@@ -9,11 +9,11 @@ import requests
 from funding_slackbot.config import SourceSettings
 from funding_slackbot.models import Opportunity
 from funding_slackbot.notifiers.slack_webhook import render_slack_message_text
-from funding_slackbot.sources.rss_source import (
-    InnovationFundingSearchSource,
-    LeverhulmeListingsSource,
-    PortsmouthJobsSource,
-    RssSource,
+from funding_slackbot.sources.innovation import InnovationFundingSearchSource
+from funding_slackbot.sources.leverhulme import LeverhulmeListingsSource
+from funding_slackbot.sources.portsmouth_jobs import PortsmouthJobsSource
+from funding_slackbot.sources.rss_feed import RssSource
+from funding_slackbot.sources.wellcome import (
     WellcomeCmsSchemesSource,
     WellcomeSchemesSource,
 )
