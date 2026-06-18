@@ -318,10 +318,13 @@ The user message contains criteria and one opportunity.
 Use include_keywords as semantic interests, not just literal string matches.
 Treat exclude_keywords as disqualifying themes.
 If include_councils or include_funding_types are present, require compatibility.
+Require positive evidence that the specific opportunity matches at least one inclusion interest.
+The absence of exclusions, a broadly relevant funder/source, or generic scheme wording is not enough to match.
+For broad schemes, match only when the title, summary, metadata, or stated scope shows a concrete fit to the configured interests.
 If min_days_until_deadline is present, reject fixed deadlines that are too soon.
 Do not reject missing deadlines by itself; treat them as rolling or continuously open calls and mention that the date should be verified.
 Keep lists short. Include only facts supported by the opportunity.
-Prefer including borderline but plausible opportunities; do not invent facts."""
+Include borderline opportunities only when the provided opportunity text gives concrete evidence of fit; do not invent facts."""
 
 
 def _opportunity_to_assessment_item(
