@@ -180,6 +180,7 @@ def test_assess_opportunity_sends_criteria_and_truncates_summary(monkeypatch) ->
     assert result is not None
     assert "Do not reject missing deadlines by itself" in system_prompt
     assert "Require positive evidence" in system_prompt
+    assert "Do not narrow the criteria to a subset" in system_prompt
     assert "absence of exclusions" in system_prompt
     assert prompt["criteria"]["include_keywords"] == ["AI", "digital health"]
     assert prompt["criteria"]["exclude_keywords"] == ["studentship"]
