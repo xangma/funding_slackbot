@@ -176,7 +176,9 @@ def test_assess_opportunity_sends_criteria_and_truncates_summary(monkeypatch) ->
     )
 
     prompt = json.loads(calls[0]["messages"][1]["content"])
+    system_prompt = calls[0]["messages"][0]["content"]
     assert result is not None
+    assert "Do not reject missing deadlines by itself" in system_prompt
     assert prompt["criteria"]["include_keywords"] == ["AI", "digital health"]
     assert prompt["criteria"]["exclude_keywords"] == ["studentship"]
     assert prompt["criteria"]["min_days_until_deadline"] == 10

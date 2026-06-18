@@ -318,7 +318,8 @@ The user message contains criteria and one opportunity.
 Use include_keywords as semantic interests, not just literal string matches.
 Treat exclude_keywords as disqualifying themes.
 If include_councils or include_funding_types are present, require compatibility.
-If min_days_until_deadline is present, reject missing or too-soon deadlines.
+If min_days_until_deadline is present, reject fixed deadlines that are too soon.
+Do not reject missing deadlines by itself; treat them as rolling or continuously open calls and mention that the date should be verified.
 Keep lists short. Include only facts supported by the opportunity.
 Prefer including borderline but plausible opportunities; do not invent facts."""
 

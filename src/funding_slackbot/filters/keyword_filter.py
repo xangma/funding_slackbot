@@ -62,23 +62,20 @@ class RuleBasedFilter(Filter):
 
         if self.settings.min_days_until_deadline is not None:
             if opportunity.closing_date is None:
-                return FilterResult(
-                    matched=False,
-                    reasons=["missing closing date required by deadline filter"],
-                )
-
-            now = self.now_provider().astimezone(timezone.utc)
-            delta = opportunity.closing_date - now
-            days_until_deadline = int(delta.total_seconds() // 86400)
-            if days_until_deadline < self.settings.min_days_until_deadline:
-                return FilterResult(
-                    matched=False,
-                    reasons=[
-                        "deadline too soon "
-                        f"({days_until_deadline}d < {self.settings.min_days_until_deadline}d)"
-                    ],
-                )
-            reasons.append(f"deadline in {days_until_deadline} days")
+                reasons.append("no fixed deadline")
+            else:
+                now = self.now_provider().astimezone(timezone.utc)
+                delta = opportunity.closing_date - now
+                days_until_deadline = int(delta.total_seconds() // 86400)
+                if days_until_deadline < self.settings.min_days_until_deadline:
+                    return FilterResult(
+                        matched=False,
+                        reasons=[
+                            "deadline too soon "
+                            f"({days_until_deadline}d < {self.settings.min_days_until_deadline}d)"
+                        ],
+                    )
+                reasons.append(f"deadline in {days_until_deadline} days")
 
         if not reasons:
             reasons.append("matched default pass-through rules")

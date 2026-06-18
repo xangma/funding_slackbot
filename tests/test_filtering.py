@@ -76,6 +76,25 @@ def test_filter_rejects_deadline_too_close() -> None:
     assert "deadline too soon" in result.reason_text()
 
 
+def test_filter_allows_missing_deadline_for_rolling_calls() -> None:
+    filt = RuleBasedFilter(
+        FilterSettings(
+            include_keywords=["AI"],
+            min_days_until_deadline=10,
+        )
+    )
+
+    result = filt.evaluate(
+        _opportunity(
+            closing_date=None,
+            summary="Rolling AI translational funding call open throughout the year",
+        )
+    )
+
+    assert result.matched is True
+    assert "no fixed deadline" in result.reason_text()
+
+
 def test_filter_deadline_uses_injected_clock() -> None:
     now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
     filt = RuleBasedFilter(
