@@ -156,6 +156,7 @@ digest:
   post_at_hour: 9
   timezone: Europe/London
   post_when_pending_count_reaches: 10
+  max_items_per_message: 25
 
 reminders:
   enabled: false

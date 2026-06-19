@@ -319,6 +319,56 @@ def test_batched_llm_grouping_queues_until_digest_cutoff(tmp_path) -> None:
     assert seen.posted_at == second_now
 
 
+def test_batched_digest_flushes_all_due_items_in_digest_chunks(tmp_path) -> None:
+    store = SQLiteStore(str(tmp_path / "state.sqlite"))
+    store.init_db()
+    opportunities = [
+        _opportunity(
+            external_id=f"queued-{index:02d}",
+            title=f"AI programme {index:02d}",
+        )
+        for index in range(12)
+    ]
+    notifier = DigestRecordingNotifier()
+
+    stats = FundingOpportunityService(
+        sources=[StaticSource(opportunities)],
+        filter_engine=AlwaysMatchFilter(),
+        store=store,
+        notifier=notifier,
+        max_posts_per_run=5,
+        record_non_matches_as_seen=True,
+        dry_run=False,
+        llm_client=FakeLLMClient(),  # type: ignore[arg-type]
+        group_opportunities_with_llm=True,
+        batch_new_opportunities=True,
+        digest_post_at_hour=9,
+        digest_timezone="UTC",
+        digest_post_when_pending_count_reaches=1,
+        digest_max_items_per_message=4,
+        now_provider=lambda: datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc),
+    ).run_once()
+
+    assert stats.queued_for_digest == 12
+    assert stats.pending_digest == 12
+    assert stats.posted == 12
+    assert stats.grouped_messages_posted == 3
+    assert notifier.digest_calls == [
+        ["queued-00", "queued-01", "queued-02", "queued-03"],
+        ["queued-04", "queued-05", "queued-06", "queued-07"],
+        ["queued-08", "queued-09", "queued-10", "queued-11"],
+    ]
+    statuses = []
+    for index in range(12):
+        seen = store.has_seen(
+            source_id="ukri_rss",
+            external_id=f"queued-{index:02d}",
+        )
+        assert seen is not None
+        statuses.append(seen.post_status)
+    assert statuses == ["posted"] * 12
+
+
 def test_batched_digest_does_not_include_old_posted_items(tmp_path) -> None:
     store = SQLiteStore(str(tmp_path / "state.sqlite"))
     store.init_db()

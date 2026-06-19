@@ -64,6 +64,7 @@ class FundingOpportunityService:
         digest_post_at_hour: int = 9,
         digest_timezone: str = "Europe/London",
         digest_post_when_pending_count_reaches: int = 10,
+        digest_max_items_per_message: int = 25,
         deadline_reminders_enabled: bool = False,
         deadline_reminder_days: int = 7,
         max_deadline_reminders: int = 10,
@@ -87,6 +88,7 @@ class FundingOpportunityService:
         self.digest_post_when_pending_count_reaches = (
             digest_post_when_pending_count_reaches
         )
+        self.digest_max_items_per_message = max(1, digest_max_items_per_message)
         self.deadline_reminders_enabled = deadline_reminders_enabled
         self.deadline_reminder_days = deadline_reminder_days
         self.max_deadline_reminders = max_deadline_reminders
@@ -272,10 +274,7 @@ class FundingOpportunityService:
     def _post_due_pending_digest(self, stats: RunStats) -> None:
         try:
             records = self.store.list_pending_digest(
-                limit=max(
-                    self.max_posts_per_run,
-                    self.digest_post_when_pending_count_reaches,
-                )
+                limit=None,
             )
         except Exception as exc:  # noqa: BLE001
             message = f"failed to read pending digest items: {exc}"
@@ -296,19 +295,14 @@ class FundingOpportunityService:
             return
 
         stats.digest_due = True
-        matches = [
-            _record_to_match(record)
-            for record in records[: self.max_posts_per_run]
-        ]
-        self._post_grouped(matches, stats)
+        for chunk in _chunks(records, self.digest_max_items_per_message):
+            matches = [_record_to_match(record) for record in chunk]
+            self._post_grouped(matches, stats)
 
     def _preview_pending_digest(self, stats: RunStats) -> None:
         try:
             records = self.store.list_pending_digest(
-                limit=max(
-                    self.max_posts_per_run,
-                    self.digest_post_when_pending_count_reaches,
-                )
+                limit=None,
             )
         except Exception as exc:  # noqa: BLE001
             message = f"failed to read pending digest items: {exc}"
@@ -319,11 +313,9 @@ class FundingOpportunityService:
         stats.pending_digest = len(records)
         if records and self._pending_digest_due(records):
             stats.digest_due = True
-            matches = [
-                _record_to_match(record)
-                for record in records[: self.max_posts_per_run]
-            ]
-            self.digest_preview_callback(self._build_digest(matches, stats))
+            for chunk in _chunks(records, self.digest_max_items_per_message):
+                matches = [_record_to_match(record) for record in chunk]
+                self.digest_preview_callback(self._build_digest(matches, stats))
         elif records:
             stats.digest_not_due = True
 
@@ -615,6 +607,10 @@ class FundingOpportunityService:
 
     def _now(self) -> datetime:
         return self.now_provider().astimezone(timezone.utc)
+
+
+def _chunks(records: list[SeenRecord], size: int) -> list[list[SeenRecord]]:
+    return [records[index : index + size] for index in range(0, len(records), size)]
 
 
 def _opportunity_metadata(opportunity: Opportunity) -> dict[str, object]:

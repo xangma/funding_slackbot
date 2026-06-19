@@ -74,6 +74,7 @@ class DigestSettings:
     post_at_hour: int = 9
     timezone: str = "Europe/London"
     post_when_pending_count_reaches: int = 10
+    max_items_per_message: int = 25
 
 
 @dataclass(slots=True)
@@ -385,6 +386,11 @@ def load_config(path: str | Path) -> AppConfig:
         post_when_pending_count_reaches=_as_int(
             raw_digest.get("post_when_pending_count_reaches", 10),
             field_name="digest.post_when_pending_count_reaches",
+            minimum=1,
+        ),
+        max_items_per_message=_as_int(
+            raw_digest.get("max_items_per_message", 25),
+            field_name="digest.max_items_per_message",
             minimum=1,
         ),
     )

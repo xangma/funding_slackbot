@@ -125,6 +125,7 @@ def test_load_config_parses_llm_grouping_and_reminders(tmp_path) -> None:
           post_at_hour: 9
           timezone: Europe/London
           post_when_pending_count_reaches: 4
+          max_items_per_message: 12
         reminders:
           enabled: true
           days_before_deadline: 7
@@ -146,6 +147,7 @@ def test_load_config_parses_llm_grouping_and_reminders(tmp_path) -> None:
     assert config.digest.post_at_hour == 9
     assert config.digest.timezone == "Europe/London"
     assert config.digest.post_when_pending_count_reaches == 4
+    assert config.digest.max_items_per_message == 12
     assert config.reminders.enabled is True
     assert config.reminders.days_before_deadline == 7
     assert config.reminders.max_reminders_per_run == 3

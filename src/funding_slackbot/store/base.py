@@ -149,7 +149,7 @@ class Store(ABC):
     def list_pending_digest(
         self,
         *,
-        limit: int,
+        limit: int | None = None,
     ) -> list[SeenRecord]:
         """Return opportunities queued for a grouped digest."""
 

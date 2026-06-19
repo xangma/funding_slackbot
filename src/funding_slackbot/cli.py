@@ -172,6 +172,7 @@ def _run_command(
         digest_post_when_pending_count_reaches=(
             app_config.digest.post_when_pending_count_reaches
         ),
+        digest_max_items_per_message=app_config.digest.max_items_per_message,
         deadline_reminders_enabled=app_config.reminders.enabled,
         deadline_reminder_days=app_config.reminders.days_before_deadline,
         max_deadline_reminders=app_config.reminders.max_reminders_per_run,

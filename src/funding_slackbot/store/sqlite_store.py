@@ -388,11 +388,13 @@ class SQLiteStore(Store):
     def list_pending_digest(
         self,
         *,
-        limit: int,
+        limit: int | None = None,
     ) -> list[SeenRecord]:
+        limit_clause = "LIMIT ?" if limit is not None else ""
+        parameters: tuple[int, ...] = (limit,) if limit is not None else ()
         with self._connect() as connection:
             rows = connection.execute(
-                """
+                f"""
                 SELECT
                     external_id,
                     source_id,
@@ -422,9 +424,9 @@ class SQLiteStore(Store):
                 WHERE posted_at IS NULL
                     AND post_status = 'pending_digest'
                 ORDER BY first_seen_at ASC, title ASC
-                LIMIT ?
+                {limit_clause}
                 """,
-                (limit,),
+                parameters,
             ).fetchall()
 
         return [_row_to_seen_record(row) for row in rows]
