@@ -1,0 +1,12 @@
+/var/log/funding_slackbot/*.log {
+    su xangma xangma
+    daily
+    rotate 14
+    maxsize 25M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    dateext
+    create 0640 xangma xangma
+}
