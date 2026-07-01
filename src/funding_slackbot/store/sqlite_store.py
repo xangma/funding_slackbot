@@ -519,7 +519,7 @@ class SQLiteStore(Store):
                     AND post_status = 'posted'
                     AND closing_date IS NOT NULL
                     AND datetime(closing_date) >= datetime(?)
-                    AND datetime(closing_date) <= datetime(?)
+                    AND date(closing_date) <= date(?)
                     AND reminder_status NOT IN ('posted', 'posting')
                 ORDER BY datetime(closing_date) ASC, title ASC
                 LIMIT ?

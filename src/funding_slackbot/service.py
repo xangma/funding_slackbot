@@ -504,7 +504,10 @@ class FundingOpportunityService:
         if not candidates:
             return
 
-        reminders = [_record_to_reminder(record) for record in candidates]
+        reminder_records, duplicate_records_by_key = _dedupe_deadline_reminder_records(
+            candidates
+        )
+        reminders = [_record_to_reminder(record) for record in reminder_records]
         if self.dry_run:
             self.reminder_preview_callback(reminders)
             return
@@ -516,7 +519,8 @@ class FundingOpportunityService:
             return
 
         claimed_records: list[SeenRecord] = []
-        for record in candidates:
+        claimed_keys: set[tuple[str, str, str]] = set()
+        for record in reminder_records:
             try:
                 claimed = self.store.claim_deadline_reminder(
                     external_id=record.external_id,
@@ -529,6 +533,7 @@ class FundingOpportunityService:
                 continue
             if claimed:
                 claimed_records.append(record)
+                claimed_keys.add(_deadline_reminder_dedupe_key(record))
 
         if not claimed_records:
             return
@@ -558,7 +563,11 @@ class FundingOpportunityService:
 
         posted_at = self._now()
         stats.reminders_posted = len(claimed_records)
-        for record in claimed_records:
+        records_to_mark = list(claimed_records)
+        for key in claimed_keys:
+            records_to_mark.extend(duplicate_records_by_key.get(key, []))
+
+        for record in records_to_mark:
             try:
                 self.store.mark_deadline_reminder_posted(
                     external_id=record.external_id,
@@ -667,6 +676,48 @@ def _record_to_reminder(record: SeenRecord) -> DeadlineReminder:
         match_reason=record.match_reason,
         original_posted_at=record.posted_at,
     )
+
+
+def _dedupe_deadline_reminder_records(
+    records: list[SeenRecord],
+) -> tuple[list[SeenRecord], dict[tuple[str, str, str], list[SeenRecord]]]:
+    selected: list[SeenRecord] = []
+    duplicates: dict[tuple[str, str, str], list[SeenRecord]] = {}
+    seen_keys: set[tuple[str, str, str]] = set()
+
+    for record in records:
+        key = _deadline_reminder_dedupe_key(record)
+        if key in seen_keys:
+            duplicates.setdefault(key, []).append(record)
+            logger.info(
+                "Suppressing duplicate deadline reminder for %s (%s/%s)",
+                record.title,
+                record.source_id,
+                record.external_id,
+            )
+            continue
+        seen_keys.add(key)
+        selected.append(record)
+
+    return selected, duplicates
+
+
+def _deadline_reminder_dedupe_key(record: SeenRecord) -> tuple[str, str, str]:
+    closing_date = record.closing_date
+    closing_key = (
+        closing_date.astimezone(timezone.utc).date().isoformat()
+        if closing_date is not None
+        else ""
+    )
+    return (
+        _normalize_reminder_dedupe_text(record.title),
+        _normalize_reminder_dedupe_text(record.funder),
+        closing_key,
+    )
+
+
+def _normalize_reminder_dedupe_text(value: str | None) -> str:
+    return " ".join((value or "").casefold().split())
 
 
 def _record_to_match(record: SeenRecord) -> OpportunityMatch:

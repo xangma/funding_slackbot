@@ -635,6 +635,37 @@ def test_store_tracks_due_deadline_reminder_once(tmp_path) -> None:
     assert seen.reminder_status == "posted"
 
 
+def test_store_deadline_reminders_are_due_by_deadline_date(tmp_path) -> None:
+    store = SQLiteStore(str(tmp_path / "state.sqlite"))
+    store.init_db()
+    now = datetime(2026, 7, 1, 0, 15, tzinfo=timezone.utc)
+    opportunity = _opportunity(external_id="same-date-deadline")
+    closing_date = datetime(2026, 7, 8, 10, 0, tzinfo=timezone.utc)
+
+    assert store.claim_for_post(
+        external_id=opportunity.external_id,
+        source_id=opportunity.source_id,
+        title=opportunity.title,
+        url=opportunity.url,
+        match_reason="test match",
+        closing_date=closing_date,
+    )
+    store.mark_posted(
+        external_id=opportunity.external_id,
+        source_id=opportunity.source_id,
+        match_reason="test match",
+        posted_at=now - timedelta(days=1),
+    )
+
+    due = store.list_due_deadline_reminders(
+        now=now,
+        days_before_deadline=7,
+        limit=10,
+    )
+
+    assert [record.external_id for record in due] == [opportunity.external_id]
+
+
 def test_service_posts_due_deadline_reminders(tmp_path) -> None:
     store = SQLiteStore(str(tmp_path / "state.sqlite"))
     store.init_db()
@@ -679,6 +710,71 @@ def test_service_posts_due_deadline_reminders(tmp_path) -> None:
     )
     assert seen is not None
     assert seen.reminder_status == "posted"
+
+
+def test_service_suppresses_duplicate_deadline_reminders(tmp_path) -> None:
+    store = SQLiteStore(str(tmp_path / "state.sqlite"))
+    store.init_db()
+    now = datetime(2026, 7, 1, 0, 15, tzinfo=timezone.utc)
+    first = _opportunity(
+        source_id="innovation_funding_search",
+        external_id="innovation-competition:2504",
+        title="Robotics Adoption Central Convening Body summer 2026",
+        funder="Innovate UK",
+        funding_type="Competition",
+        closing_date=datetime(2026, 7, 8, 0, 0, tzinfo=timezone.utc),
+    )
+    duplicate = _opportunity(
+        source_id="ukri_rss",
+        external_id="https://beta-ukri.msappproxy.net/?p=194468&post_type=opportunity",
+        title="Robotics Adoption Central Convening Body summer 2026",
+        funder="Innovate UK",
+        funding_type="Grant",
+        closing_date=datetime(2026, 7, 8, 10, 0, tzinfo=timezone.utc),
+    )
+    for opportunity in [first, duplicate]:
+        assert store.claim_for_post(
+            external_id=opportunity.external_id,
+            source_id=opportunity.source_id,
+            title=opportunity.title,
+            url=opportunity.url,
+            match_reason="keywords: robot*",
+            closing_date=opportunity.closing_date,
+            funder=opportunity.funder,
+            funding_type=opportunity.funding_type,
+        )
+        store.mark_posted(
+            external_id=opportunity.external_id,
+            source_id=opportunity.source_id,
+            match_reason="keywords: robot*",
+            posted_at=now - timedelta(days=1),
+        )
+    notifier = ReminderRecordingNotifier()
+
+    stats = FundingOpportunityService(
+        sources=[],
+        filter_engine=AlwaysMatchFilter(),
+        store=store,
+        notifier=notifier,
+        max_posts_per_run=10,
+        record_non_matches_as_seen=True,
+        dry_run=False,
+        deadline_reminders_enabled=True,
+        deadline_reminder_days=7,
+        now_provider=lambda: now,
+    ).run_once()
+
+    assert stats.reminders_due == 2
+    assert stats.reminders_posted == 1
+    assert notifier.reminder_calls == [[first.external_id]]
+    for opportunity in [first, duplicate]:
+        seen = store.has_seen(
+            source_id=opportunity.source_id,
+            external_id=opportunity.external_id,
+        )
+        assert seen is not None
+        assert seen.reminder_status == "posted"
+        assert seen.reminder_posted_at == now
 
 
 def test_service_marks_deadline_reminder_failed_on_notifier_error(tmp_path) -> None:
