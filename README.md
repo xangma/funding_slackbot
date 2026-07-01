@@ -1,6 +1,6 @@
 # Funding Slack Bot
 
-Modular Python 3.12 service that polls funding opportunity sources, filters relevance, deduplicates, and posts new matches to Slack.
+Modular Python 3.12 service that polls funding opportunity sources, screens relevance with rules or optional LLM assessment, deduplicates, and posts new matches to Slack.
 
 Primary sources implemented: UKRI Funding Finder RSS, Wellcome CMS scheme pages, Innovate UK funding search, Leverhulme listings, NIHR, Horizon Europe, Royal Society, Royal Academy of Engineering, Academy of Medical Sciences, ARIA, UK Space Agency, and Cancer Research Horizons. British Academy is registered but disabled in the example config because its funding pages are Cloudflare-protected for non-browser requests.
 
@@ -9,10 +9,10 @@ Primary sources implemented: UKRI Funding Finder RSS, Wellcome CMS scheme pages,
 - CLI-first scheduled execution (`cron`, GitHub Actions, Lambda trigger, etc.)
 - Source plugin interface (`Source.fetch() -> list[Opportunity]`)
 - Source-agnostic normalized `Opportunity` model
-- Rule-based filter engine with match reasons
+- Rule-based filtering plus optional LLM relevance assessment
 - SQLite dedupe store (idempotent posting)
 - Slack Incoming Webhook notifier
-- Optional local LLM grouping via llama.cpp's OpenAI-compatible API
+- Optional local LLM digest grouping via an OpenAI-compatible chat API
 - Deadline reminder digests for posted opportunities nearing their closing date
 - Retry handling for transient RSS/Slack failures
 - Dry-run mode that prints would-post messages
@@ -82,7 +82,7 @@ Important: in config, `slack.webhook_env_var` must be the environment variable n
 
 ## Filtering behavior
 
-Rules are applied in this order:
+By default, rules are applied in this order:
 
 1. `include_keywords` (if configured, at least one must match title/summary)
 2. `exclude_keywords` (if any match, item is excluded)
@@ -90,7 +90,9 @@ Rules are applied in this order:
 4. Optional funding type whitelist
 5. Optional minimum days to deadline
 
-When a record matches, Slack includes `Why it matched: ...` with keyword or rule hits. With `llm.group_opportunities` enabled and a reachable local model, a run posts one grouped digest instead of one Slack message per opportunity. If `digest.batch_new_opportunities` is enabled, new matches are queued first and posted together at the configured digest time, or earlier when the pending queue reaches the configured size. If the local LLM is unavailable or returns invalid JSON, the bot falls back to deterministic metadata grouping so opportunities are not dropped.
+With `llm.enabled` and `llm.assess_opportunities` enabled, each candidate that is not already posted, reserved, or queued for a digest is classified by the local model instead of the rule-based filter. The model receives normalized opportunity fields plus the configured include/exclude/council/type/deadline criteria. If the model request fails or returns unusable JSON, the bot falls back to the rules above.
+
+When a record matches, Slack includes `Why it matched: ...` with rule hits or the LLM decision. Grouping is separate from assessment: when `llm.enabled` and `llm.group_opportunities` are both true, matched items are grouped into one digest. `digest.batch_new_opportunities` can queue them until the configured digest time or pending-item threshold. If grouping fails, deterministic metadata grouping is used so matches are not dropped.
 
 Plain keywords match whole words or phrases. Add `*` inside a keyword to match a
 word family intentionally, for example `genom*` matches `genome`, `genomic`, and
@@ -110,32 +112,9 @@ Dedupe key: `(source_id, external_id)`.
 
 Existing SQLite databases from the original single-column `external_id` schema are migrated automatically by `init-db` or `run`. The migration preserves existing `posted_at` values and marks those rows as `posted`.
 
-SQLite schema (`opportunities`):
+The `opportunities` table stores the composite key, seen/posting timestamps, post status, title/link/source metadata, optional LLM assessment JSON, deadline metadata, and reminder state. Primary key: `(source_id, external_id)`.
 
-- `source_id TEXT`
-- `external_id TEXT`
-- `first_seen_at DATETIME`
-- `posted_at DATETIME NULL`
-- `title TEXT`
-- `url TEXT`
-- `match_reason TEXT`
-- `post_status TEXT`
-- `last_post_attempt_at DATETIME NULL`
-- `post_error TEXT NULL`
-- `last_seen_at DATETIME NULL`
-- `closing_date DATETIME NULL`
-- `opening_date DATETIME NULL`
-- `funder TEXT NULL`
-- `funding_type TEXT NULL`
-- `total_fund TEXT NULL`
-- `reminder_status TEXT`
-- `last_reminder_attempt_at DATETIME NULL`
-- `reminder_posted_at DATETIME NULL`
-- `reminder_error TEXT NULL`
-
-Primary key: `(source_id, external_id)`.
-
-The SQLite database also stores a `runs` table with one row per completed production `run` command. It records timestamps, counts, success state, and a compact error summary for operational checks. SQLite connections use a busy timeout and WAL journaling, and the CLI takes a per-database lock file before running commands to avoid overlapping cron/manual runs.
+The SQLite database also stores a `runs` table with one row per completed production `run` command, including timestamps, counts, success state, and a compact error summary. SQLite connections use a busy timeout and WAL journaling, and the CLI takes a per-database lock file before running commands to avoid overlapping cron/manual runs.
 
 Before deploying a schema-changing release on `roni1`, back up the current database, then run `funding-bot --config config.yaml init-db` once on the host to apply the migration before the scheduled job resumes.
 
@@ -170,7 +149,7 @@ curl http://127.0.0.1:8001/health
 curl http://127.0.0.1:8001/v1/models
 ```
 
-With `llm.assess_opportunities` enabled, each fetched opportunity is assessed by the local model against the configured filter interests and exclusions. If the model request fails or returns unusable JSON, the bot falls back to the deterministic rule-based filter. The grouping prompt sends normalized opportunity fields and asks the model to return JSON containing only group headings, summaries, and exact opportunity IDs. Slack rendering still uses the original source titles, links, funders, deadlines, and match reasons.
+With `llm.enabled` and `llm.assess_opportunities` enabled, the filter asks the local model to classify each candidate against the configured interests and exclusions, using deterministic rules only on request or parsing failures. The grouping prompt sends normalized opportunity fields and asks the model to return JSON containing only group headings, summaries, and exact opportunity IDs. Slack rendering still uses the original source titles, links, funders, deadlines, and match reasons.
 
 With digest batching enabled, matching opportunities move into `pending_digest` state. The scheduled job keeps fetching every run, but only posts pending digest items once the local time is at or after `digest.post_at_hour` and at least one queued item was first seen before that day's cutoff. This means opportunities that arrive after the morning digest are normally grouped into the next day's digest. The queue also flushes immediately if it reaches `digest.post_when_pending_count_reaches`.
 
